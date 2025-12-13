@@ -1,0 +1,656 @@
+{
+    "morgen": {
+        "name": "Morgenshtern",
+        "rarity": "limited",
+        "img": "morgen.jpg",
+        "desc": "Легендарная пыль. Делает деньги из воздуха."
+    },
+    "kizaru": {
+        "name": "Kizaru",
+        "rarity": "epic",
+        "img": "kizaru.jpg",
+        "desc": "Настоящий трэп-лорд из Барселоны."
+    },
+    "soda": {
+        "name": "Soda Luv",
+        "rarity": "epic",
+        "img": "soda.jpg",
+        "desc": "Голодный пёс, прости."
+    },
+    "oxxxymiron": {
+        "name": "Oxxxymiron",
+        "rarity": "rare",
+        "img": "oxxxy.jpg",
+        "desc": "Город под подошвой."
+    },
+    "og_buda": {
+        "name": "OG Buda",
+        "rarity": "rare",
+        "img": "buda.jpg",
+        "desc": "ОПГ Сити на связи."
+    },
+    "scally": {
+        "name": "Scally Milano",
+        "rarity": "rare",
+        "img": "scally.jpg",
+        "desc": "Мамонт не вымрет."
+    },
+    "yanix": {
+        "name": "Yanix",
+        "rarity": "common",
+        "img": "yanix.jpg",
+        "desc": "Папа трэпа на русском."
+    },
+    "mayot": {
+        "name": "Mayot",
+        "rarity": "common",
+        "img": "mayot.jpg",
+        "desc": "Море в ванной."
+    },
+    "heronwater": {
+        "name": "Heronwater",
+        "rarity": "common",
+        "img": "heron.jpg",
+        "desc": "Слишком много басов."
+    },
+    "bushido": {
+        "name": "Bushido Zho",
+        "rarity": "common",
+        "img": "bushido.jpg",
+        "desc": "Водила чувствует вайб."
+    },
+    "sematary": {
+        "name": "Sematary",
+        "rarity": "limited",
+        "img": "sematary.jpg",  
+        "desc": "HAUNTED MOUND. Grave House Keeper. Rainbow Bridge."
+    },
+    "morgen": {
+    "name": "Morgenshtern",
+    "rarity": "limited",
+    "img": "morgen.jpg",
+    "desc": "Легендарная пыль. Делает деньги из воздуха."
+  },
+  "eminem": {
+    "name": "Eminem",
+    "rarity": "limited",
+    "img": "eminem.jpg",
+    "desc": "Rap God. Скорость читки сверхзвуковая."
+  },
+  "2pac": {
+    "name": "2Pac",
+    "rarity": "limited",
+    "img": "2pac.jpg",
+    "desc": "All Eyez On Me. Легенда Западного побережья."
+  },
+  "biggie": {
+    "name": "Notorious B.I.G.",
+    "rarity": "limited",
+    "img": "biggie.jpg",
+    "desc": "Король Нью-Йорка. Big Poppa."
+  },
+  "kanye": {
+    "name": "Kanye West",
+    "rarity": "limited",
+    "img": "ye.jpg",
+    "desc": "Гений или безумец? Ye."
+  },
+  "oxxxymiron": {
+    "name": "Oxxxymiron",
+    "rarity": "limited",
+    "img": "oxxxy.jpg",
+    "desc": "Город под подошвой. Вечный жид."
+  },
+  "scriptonite": {
+    "name": "Scriptonite",
+    "rarity": "epic",
+    "img": "script.jpg",
+    "desc": "Дом с нормальными явлениями. Уроборос."
+  },
+  "miyagi": {
+    "name": "Miyagi",
+    "rarity": "epic",
+    "img": "miyagi.jpg",
+    "desc": "Hajime. Вайб, который лечит душу."
+  },
+  "kizaru": {
+    "name": "Kizaru",
+    "rarity": "epic",
+    "img": "kizaru.jpg",
+    "desc": "Real Trap Shit из Барселоны."
+  },
+  "drake": {
+    "name": "Drake",
+    "rarity": "epic",
+    "img": "drake.jpg",
+    "desc": "Certified Lover Boy. Хитмейкер из Канады."
+  },
+  "travis": {
+    "name": "Travis Scott",
+    "rarity": "epic",
+    "img": "travis.jpg",
+    "desc": "It's Lit! Король мошпитов и автотюна."
+  },
+  "snoop": {
+    "name": "Snoop Dogg",
+    "rarity": "epic",
+    "img": "snoop.jpg",
+    "desc": "Smoke Weed Everyday. Дядя Снуп."
+  },
+  "50cent": {
+    "name": "50 Cent",
+    "rarity": "epic",
+    "img": "50cent.jpg",
+    "desc": "Get Rich or Die Tryin'. В клубе."
+  },
+  "soda": {
+    "name": "Soda Luv",
+    "rarity": "rare",
+    "img": "soda.jpg",
+    "desc": "Голодный пёс. Прости, я не хотел."
+  },
+  "scally": {
+    "name": "Scally Milano",
+    "rarity": "rare",
+    "img": "scally.jpg",
+    "desc": "Скамер маминой подруги."
+  },
+  "bbt": {
+    "name": "Big Baby Tape",
+    "rarity": "rare",
+    "img": "tape.jpg",
+    "desc": "Dragonborn. Пу-пу-пу!"
+  },
+  "aarne": {
+    "name": "Aarne",
+    "rarity": "rare",
+    "img": "aarne.jpg",
+    "desc": "AA Language. Битмарь всея Руси."
+  },
+  "carti": {
+    "name": "Playboi Carti",
+    "rarity": "rare",
+    "img": "carti.jpg",
+    "desc": "Vamp Anthem. Создатель опиум-культа."
+  },
+  "uzi": {
+    "name": "Lil Uzi Vert",
+    "rarity": "rare",
+    "img": "uzi.jpg",
+    "desc": "Все мои друзья мертвы. XO Tour Llif3."
+  },
+  "xxxtentacion": {
+    "name": "XXXTentacion",
+    "rarity": "rare",
+    "img": "xxx.jpg",
+    "desc": "Look at me! Легенда Soundcloud."
+  },
+  "juice": {
+    "name": "Juice WRLD",
+    "rarity": "rare",
+    "img": "juice.jpg",
+    "desc": "Lucid Dreams. Король фристайла."
+  },
+  "peep": {
+    "name": "Lil Peep",
+    "rarity": "rare",
+    "img": "peep.jpg",
+    "desc": "Star Shopping. Эмо-рэп икона."
+  },
+  "basta": {
+    "name": "Баста",
+    "rarity": "rare",
+    "img": "basta.jpg",
+    "desc": "Моя игра. Ноггано. Nintendo."
+  },
+  "pharaoh": {
+    "name": "Pharaoh",
+    "rarity": "rare",
+    "img": "pharaoh.jpg",
+    "desc": "Мертвая династия. Дико, например."
+  },
+  "face": {
+    "name": "Face",
+    "rarity": "rare",
+    "img": "face.jpg",
+    "desc": "Еду в магазин Гуччи. Бургер."
+  },
+  "heronwater": {
+    "name": "Heronwater",
+    "rarity": "common",
+    "img": "heron.jpg",
+    "desc": "Слишком много басов. Джерси клаб."
+  },
+  "bushido": {
+    "name": "Bushido Zho",
+    "rarity": "common",
+    "img": "bushido.jpg",
+    "desc": "Водила чувствует вайб. Амиго."
+  },
+  "yanix": {
+    "name": "Yanix",
+    "rarity": "common",
+    "img": "yanix.jpg",
+    "desc": "Папа трэпа на русском."
+  },
+  "mayot": {
+    "name": "Mayot",
+    "rarity": "common",
+    "img": "mayot.jpg",
+    "desc": "Море в ванной. Мелон Мьюзик."
+  },
+  "163": {
+    "name": "163onmyneck",
+    "rarity": "common",
+    "img": "163.jpg",
+    "desc": "Стоунер и трэпер. Вырос на улицах."
+  },
+  "seenee": {
+    "name": "Seemee",
+    "rarity": "common",
+    "img": "seemee.jpg",
+    "desc": "Голодный пес. Тюменская банда."
+  },
+  "lo66": {
+    "name": "Lovv66",
+    "rarity": "common",
+    "img": "lovv66.jpg",
+    "desc": "Трап-трап-трап. Компьютерные звуки."
+  },
+  "yeat": {
+    "name": "Yeat",
+    "rarity": "common",
+    "img": "yeat.jpg",
+    "desc": "Tonka. Bell. Новый звук."
+  },
+  "cental": {
+    "name": "Central Cee",
+    "rarity": "common",
+    "img": "central.jpg",
+    "desc": "Doja. UK Drill на карте."
+  },
+  "icecube": {
+    "name": "Ice Cube",
+    "rarity": "common",
+    "img": "cube.jpg",
+    "desc": "It was a good day. N.W.A."
+  },
+  "future": {
+    "name": "Future",
+    "rarity": "common",
+    "img": "future.jpg",
+    "desc": "Mask Off. Токсичный король."
+  },
+  "thug": {
+    "name": "Young Thug",
+    "rarity": "common",
+    "img": "thug.jpg",
+    "desc": "Slime Season. Змеиный язык."
+  },
+  "baby": {
+    "name": "Lil Baby",
+    "rarity": "common",
+    "img": "lilbaby.jpg",
+    "desc": "Drip Too Hard. Герой улиц."
+  },
+  "21savage": {
+    "name": "21 Savage",
+    "rarity": "common",
+    "img": "21.jpg",
+    "desc": "Issa Knife. Банковский счет."
+  },
+  "post": {
+    "name": "Post Malone",
+    "rarity": "common",
+    "img": "post.jpg",
+    "desc": "Rockstar. Татуировки на лице."
+  },
+  "weeknd": {
+    "name": "The Weeknd",
+    "rarity": "common",
+    "img": "weeknd.jpg",
+    "desc": "Blinding Lights. Звездный мальчик."
+  },
+  "macan": {
+    "name": "Macan",
+    "rarity": "common",
+    "img": "macan.jpg",
+    "desc": "За всех. Майбах. Пацанский рэп."
+  },
+  "instasamka": {
+    "name": "Instasamka",
+    "rarity": "common",
+    "img": "samka.jpg",
+    "desc": "За деньги да. Королева хайпа."
+  },
+  "toxi": {
+    "name": "Toxi$",
+    "rarity": "common",
+    "img": "toxis.jpg",
+    "desc": "New Jazz. Танцуй как Токсис."
+  },
+  "kai": {
+    "name": "Kai Angel",
+    "rarity": "common",
+    "img": "kai.jpg",
+    "desc": "Viperr. Высокая мода."
+  },
+  "9mice": {
+    "name": "9mice",
+    "rarity": "common",
+    "img": "9mice.jpg",
+    "desc": "Viperr 2.0. Глам-рок рэп."
+  },
+  "guf": {
+    "name": "Guf",
+    "rarity": "common",
+    "img": "guf.jpg",
+    "desc": "Ice Baby. Центр. ZM Nation."
+  },
+  "noize": {
+    "name": "Noize MC",
+    "rarity": "common",
+    "img": "noize.jpg",
+    "desc": "Выдыхай. Устрой дестрой."
+  },
+  "drdre": {
+    "name": "Dr. Dre",
+    "rarity": "limited",
+    "img": "dre.jpg",
+    "desc": "Still D.R.E. Отец всего хип-хопа."
+  },
+  "jayz": {
+    "name": "Jay-Z",
+    "rarity": "limited",
+    "img": "jayz.jpg",
+    "desc": "Empire State of Mind. Первый рэпер-миллиардер."
+  },
+  "nas": {
+    "name": "Nas",
+    "rarity": "limited",
+    "img": "nas.jpg",
+    "desc": "Illmatic. Нью-Йоркское состояние ума."
+  },
+  "mfdoom": {
+    "name": "MF DOOM",
+    "rarity": "limited",
+    "img": "doom.jpg",
+    "desc": "ALL CAPS. Человек в железной маске."
+  },
+  "kendrick": {
+    "name": "Kendrick Lamar",
+    "rarity": "limited",
+    "img": "kendrick.jpg",
+    "desc": "HUMBLE. Король Западного побережья."
+  },
+  "tyler": {
+    "name": "Tyler, The Creator",
+    "rarity": "limited",
+    "img": "tyler.jpg",
+    "desc": "IGOR. Создатель хаоса и стиля."
+  },
+  "asaprocky": {
+    "name": "A$AP Rocky",
+    "rarity": "epic",
+    "img": "rocky.jpg",
+    "desc": "Fashion Killa. Самый стильный на районе."
+  },
+  "boulevard": {
+    "name": "Boulevard Depo",
+    "rarity": "epic",
+    "img": "depo.jpg",
+    "desc": "Топский Павел. Отрицала. Sport Mode."
+  },
+  "saluki": {
+    "name": "Saluki",
+    "rarity": "epic",
+    "img": "saluki.jpg",
+    "desc": "WILD EA$T. Властелин калек."
+  },
+  "shadowraze": {
+    "name": "Shadowraze",
+    "rarity": "epic",
+    "img": "raze.jpg",
+    "desc": "Showdown. ZXC гуль 1000-7."
+  },
+  "pop": {
+    "name": "Pop Smoke",
+    "rarity": "epic",
+    "img": "popsmoke.jpg",
+    "desc": "Dior. Woo! Король Нью-Йоркского дрилла."
+  },
+  "keef": {
+    "name": "Chief Keef",
+    "rarity": "epic",
+    "img": "keef.jpg",
+    "desc": "Love Sosa. Отец всего трэпа."
+  },
+  "nicki": {
+    "name": "Nicki Minaj",
+    "rarity": "epic",
+    "img": "nicki.jpg",
+    "desc": "Starships. Королева рэпа."
+  },
+  "friendly": {
+    "name": "Friendly Thug 52",
+    "rarity": "rare",
+    "img": "thug52.jpg",
+    "desc": "Cristoforo Colombo. Санкт-Петербург. 52."
+  },
+  "alblak": {
+    "name": "Alblak 52",
+    "rarity": "rare",
+    "img": "alblak.jpg",
+    "desc": "YEEI. Да, я из России, и мне это нравится."
+  },
+  "fludd": {
+    "name": "Gone.Fludd",
+    "rarity": "rare",
+    "img": "fludd.jpg",
+    "desc": "Мамбл. Чупа Чупс. Сахарный человек."
+  },
+  "slavakpss": {
+    "name": "Слава КПСС",
+    "rarity": "rare",
+    "img": "slava.jpg",
+    "desc": "Гнойный. Антихайп. Владимир Путин."
+  },
+  "obladaet": {
+    "name": "Obladaet",
+    "rarity": "rare",
+    "img": "obla.jpg",
+    "desc": "Players Club. Британский акцент на русском."
+  },
+  "markul": {
+    "name": "Markul",
+    "rarity": "rare",
+    "img": "markul.jpg",
+    "desc": "Стрелы. Great Depression."
+  },
+  "rocket": {
+    "name": "Rocket",
+    "rarity": "rare",
+    "img": "rocket.jpg",
+    "desc": "Инвалид. Skywalker. Спокойный флоу."
+  },
+  "jcole": {
+    "name": "J. Cole",
+    "rarity": "rare",
+    "img": "jcole.jpg",
+    "desc": "No Role Modelz. Платиновый без фитов."
+  },
+  "kodak": {
+    "name": "Kodak Black",
+    "rarity": "rare",
+    "img": "kodak.jpg",
+    "desc": "Super Gremlin. Флорида вайб."
+  },
+  "metro": {
+    "name": "Metro Boomin",
+    "rarity": "rare",
+    "img": "metro.jpg",
+    "desc": "If Young Metro don't trust you..."
+  },
+  "yachty": {
+    "name": "Lil Yachty",
+    "rarity": "rare",
+    "img": "yachty.jpg",
+    "desc": "I took the wock to Poland."
+  },
+  "lida": {
+    "name": "Lida",
+    "rarity": "common",
+    "img": "lida.jpg",
+    "desc": "Евроденс и рэп. Стинт."
+  },
+  "cmh": {
+    "name": "CMH",
+    "rarity": "common",
+    "img": "cmh.jpg",
+    "desc": "Crazy Mega Hell. Хейт стример."
+  },
+  "dk": {
+    "name": "DK",
+    "rarity": "common",
+    "img": "dk.jpg",
+    "desc": "Данила Кашин. Лицемер."
+  },
+  "unki": {
+    "name": "Unki",
+    "rarity": "common",
+    "img": "unki.jpg",
+    "desc": "Jeff The Killer. Шесть ударов."
+  },
+  "pepel": {
+    "name": "Pepel Nahudi",
+    "rarity": "common",
+    "img": "pepel.jpg",
+    "desc": "Заново завоевать. Мемы и хайп."
+  },
+  "ugly": {
+    "name": "Uglystephan",
+    "rarity": "common",
+    "img": "ugly.jpg",
+    "desc": "Скам-рэп. Я не хочу в школу."
+  },
+  "krovostok": {
+    "name": "Кровосток",
+    "rarity": "common",
+    "img": "krovo.jpg",
+    "desc": "Биография. Шило. Жесть как она есть."
+  },
+  "ak47": {
+    "name": "Витя АК",
+    "rarity": "common",
+    "img": "ak47.jpg",
+    "desc": "Азино 777. Как поднять бабла?"
+  },
+  "schokk": {
+    "name": "Schokk",
+    "rarity": "common",
+    "img": "schokk.jpg",
+    "desc": "Vagabund. Лед. Дисс на всех."
+  },
+  "104": {
+    "name": "104",
+    "rarity": "common",
+    "img": "104.jpg",
+    "desc": "Скриптонит лейбл. Трушный стиль."
+  },
+  "truwer": {
+    "name": "Truwer",
+    "rarity": "common",
+    "img": "truwer.jpg",
+    "desc": "Саудовская Аравия. Павлодар."
+  },
+  "quavo": {
+    "name": "Quavo",
+    "rarity": "common",
+    "img": "quavo.jpg",
+    "desc": "Migos. Bad and Boujee."
+  },
+  "offset": {
+    "name": "Offset",
+    "rarity": "common",
+    "img": "offset.jpg",
+    "desc": "Ric Flair Drip. Migos."
+  },
+  "gunna": {
+    "name": "Gunna",
+    "rarity": "common",
+    "img": "gunna.jpg",
+    "desc": "Pushin P. Drip Season."
+  },
+  "durk": {
+    "name": "Lil Durk",
+    "rarity": "common",
+    "img": "durk.jpg",
+    "desc": "The Voice. Чикаго дрилл."
+  },
+  "jack": {
+    "name": "Jack Harlow",
+    "rarity": "common",
+    "img": "harlow.jpg",
+    "desc": "First Class. What's Poppin."
+  },
+  "sixnine": {
+    "name": "6ix9ine",
+    "rarity": "common",
+    "img": "69.jpg",
+    "desc": "GOOBA. Король троллинга."
+  },
+  "wiz": {
+    "name": "Wiz Khalifa",
+    "rarity": "common",
+    "img": "wiz.jpg",
+    "desc": "Black and Yellow. See You Again."
+  },
+  "logic": {
+    "name": "Logic",
+    "rarity": "common",
+    "img": "logic.jpg",
+    "desc": "1-800-273-8255. Скоростной флоу."
+  },
+  "mgk": {
+    "name": "MGK",
+    "rarity": "common",
+    "img": "mgk.jpg",
+    "desc": "Rap Devil. Wild Boy."
+  },
+  "dababy": {
+    "name": "DaBaby",
+    "rarity": "common",
+    "img": "dababy.jpg",
+    "desc": "Suge. Let's Goooo!"
+  },
+  "nle": {
+    "name": "NLE Choppa",
+    "rarity": "common",
+    "img": "choppa.jpg",
+    "desc": "Shotta Flow. Энергетика."
+  },
+  "tyga": {
+    "name": "Tyga",
+    "rarity": "common",
+    "img": "tyga.jpg",
+    "desc": "Taste. Loco Contigo."
+  },
+  "doja": {
+    "name": "Doja Cat",
+    "rarity": "common",
+    "img": "doja.jpg",
+    "desc": "Paint The Town Red. Boss Bitch."
+  },
+  "cardi": {
+    "name": "Cardi B",
+    "rarity": "common",
+    "img": "cardi.jpg",
+    "desc": "WAP. Bodak Yellow."
+  },
+  "hofmannita": {
+    "name": "Hofmannita",
+    "rarity": "common",
+    "img": "hofmannita.jpg",
+    "desc": "Я хочу эту сумку. Трэш-поп."
+}
+}

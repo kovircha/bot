@@ -1,0 +1,6 @@
+aiogram>=3.0.0
+aiosqlite
+colorama
+aioconsole
+httpx
+python-dotenv

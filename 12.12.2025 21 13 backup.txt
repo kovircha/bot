@@ -1,0 +1,2081 @@
+import json
+import os
+import asyncio
+import logging
+import random
+import time
+import math
+import aiosqlite
+import sys
+from colorama import init, Fore, Style
+import aioconsole
+
+# Инициализация цветов
+init(autoreset=True)
+from aiogram import Bot, Dispatcher, F, types, BaseMiddleware
+from aiogram.filters import Command, StateFilter
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, 
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    CallbackQuery, Message, BotCommand, FSInputFile,
+    InputMediaPhoto
+
+)
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+# --- КОНФИГУРАЦИЯ ---
+TOKEN = '8482572401:AAHR91Uwrq6U2-ody9jYUmQxme3xOeyzyvg'
+
+# --- НАСТРОЙКИ КАНАЛА ---
+# ID канала (можно @username или числовой ID типа -100...)
+# ВАЖНО: Бот должен быть админом в этом канале!
+REQUIRED_CHANNEL_ID = "@molokofarmoff" 
+REQUIRED_CHANNEL_URL = "https://t.me/molokofarmoff"
+
+# --- ЗАГРУЗКА КАРТ ---
+def load_cards():
+    with open("cards.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+CARDS = load_cards()
+
+# --- НАСТРОЙКИ РЕДКОСТИ ---
+RARITY_INFO = {
+    "common": {
+        "name": "Обычная", 
+        "icon": "⚪️",  # Серый/Белый
+        "color_code": 0x808080 # Код цвета для красоты (если понадобится)
+    },
+    "rare": {
+        "name": "Редкая", 
+        "icon": "🟢",  # Зеленый
+        "color_code": 0x00FF00
+    },
+    "epic": {
+        "name": "Эпическая", 
+        "icon": "🟣",  # Фиолетовый
+        "color_code": 0x800080
+    },
+    "limited": {
+        "name": "ЛИМИТКА", 
+        "icon": "🏳️‍🌈", # RGB / Радуга
+        "color_code": 0xFFD700
+    }
+}
+
+class AdminPanelStates(StatesGroup):
+    waiting_for_user_id = State() # Ждем ID игрока
+    waiting_for_value = State()   # Ждем число или текст
+
+class MarketStates(StatesGroup):
+    waiting_for_price = State()
+    card_id_to_sell = State() # Тут будем временно хранить какую карту продаем
+
+# --- FSM ---
+class GameStates(StatesGroup):
+    waiting_for_code = State()
+    waiting_for_broadcast = State()
+
+# --- MIDDLEWARE ---
+# --- MIDDLEWARE (ОБНОВЛЕННЫЙ) ---
+class GameMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event: Message, data: dict):
+        # Получаем объект User (для сообщений или колбэков)
+        if isinstance(event, Message):
+            user = event.from_user
+        elif isinstance(event, CallbackQuery):
+            user = event.from_user
+        else:
+            return await handler(event, data)
+            
+        if not user: return await handler(event, data)
+
+        # 1. Обновляем имя и ВРЕМЯ АКТИВНОСТИ
+        current_time = time.time()
+        asyncio.create_task(update_username(user.id, user.full_name))
+        
+        # Прямое обновление в БД для точности статистики (fire and forget)
+        async def set_active():
+            async with aiosqlite.connect(DB_NAME) as db:
+                await db.execute('UPDATE users SET last_active = ? WHERE user_id = ?', (current_time, user.id))
+                await db.commit()
+        asyncio.create_task(set_active())
+
+        # 1. Обновляем имя в БД
+        asyncio.create_task(update_username(user.id, user.full_name))
+
+        # 2. Пропускаем Админов без проверок
+        if user.username and user.username.lower() in ADMINS:
+            return await handler(event, data)
+
+        # --- ЛОГИКА ПРОВЕРКИ ПОДПИСКИ ---
+        try:
+            # Спрашиваем у Телеграма статус пользователя в канале
+            chat_member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user.id)
+            
+            # Если статус 'left' (ушел) или 'kicked' (выгнан) -> Блокируем
+            if chat_member.status in ['left', 'kicked']:
+                
+                # Клавиатура подписки
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📢 Подписаться на канал", url=REQUIRED_CHANNEL_URL)],
+                    [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscription")]
+                ])
+
+                # Если нажали кнопку проверки, но подписки нет
+                if isinstance(event, CallbackQuery) and event.data == "check_subscription":
+                    await event.answer("❌ Вы еще не подписались! Проверьте подписку.", show_alert=True)
+                    return 
+
+                # Если пишут сообщение или жмут другие кнопки
+                if isinstance(event, Message):
+                    await event.answer(
+                        "🔒 <b>Доступ закрыт!</b>\n\nДля игры необходимо быть подписчиком нашего канала.",
+                        reply_markup=kb,
+                        parse_mode="HTML"
+                    )
+                elif isinstance(event, CallbackQuery):
+                    # Если это был клик по другой кнопке
+                    await event.message.answer("🔒 Для продолжения подпишись на канал!", reply_markup=kb)
+                    await event.answer()
+                
+                # Прерываем обработку (не пускаем дальше)
+                return 
+                
+        except Exception as e:
+            # Если бот не админ или канал указан неверно - пишем в консоль, но игрока пускаем
+            print(f"Ошибка проверки подписки (Бот не админ?): {e}")
+
+        # --- ЛОГИКА АНТИ-СПАМА (Остается как была) ---
+        current_time = time.time()
+        if user.id in muted_users:
+            if current_time < muted_users[user.id]: return 
+            else: del muted_users[user.id]
+
+        if user.id not in user_timestamps: user_timestamps[user.id] = []
+        user_timestamps[user.id] = [t for t in user_timestamps[user.id] if current_time - t < 1.0]
+        user_timestamps[user.id].append(current_time)
+        
+        if len(user_timestamps[user.id]) > SPAM_LIMIT:
+            muted_users[user.id] = current_time + MUTE_TIME
+            if isinstance(event, Message):
+                await event.answer(f"⛔️ <b>Остынь!</b> Мут на {MUTE_TIME} сек.", parse_mode="HTML")
+            elif isinstance(event, CallbackQuery):
+                await event.answer(f"⛔️ Остынь! Мут на {MUTE_TIME} сек.", show_alert=True)
+            return 
+        
+        # Проверка старого меню (только для сообщений)
+        valid_buttons = [
+            "❄️ Трясти елку (Доить)", "⛄️ Лепить снеговика (Полить)", "🏰 Город", "🎡 Развлечения", "👤 Мой Профиль",
+            "🎅 Лавка Санты", "🎒 Склад", "🏆 Лидеры", "📟 Секретный код", "🔙 Назад",
+            "🎲 Крутить слот", "🎁 Подарок (Ежедн.)", "👺 Гринч (Ивент)", "🎴 Карточки"
+        ]
+        
+        if isinstance(event, Message) and not event.text.startswith("/") and event.text not in valid_buttons:
+             await event.answer("⚠️ Меню обновлено.", reply_markup=main_keyboard())
+
+        return await handler(event, data)
+
+# --- ИНИЦИАЛИЗАЦИЯ БОТА ---
+bot = Bot(token=TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+dp.message.middleware(GameMiddleware())
+
+# Пути к картинкам сундуков (положи файлы close_chest.jpg и open_chest.jpg в папку с ботом)
+# Или используй ссылки, если файлов нет
+CHEST_CLOSE_PATH = "closed_chest.png" 
+CHEST_OPEN_PATH = "open_chest.png"
+
+# Ссылки-заглушки (на случай если нет файлов)
+URL_CHEST_CLOSE = ""
+URL_CHEST_OPEN = "https://img.freepik.com/premium-vector/opened-wooden-chest-box-with-gold-coins-game-ui-asset-vector-illustration_1045168-19.jpg"
+
+DAILY_COOLDOWN = 86400 # 24 часа в секундах
+JACKPOT_CHANCE = 100000 # 1 к 100 000
+
+# --- АНИМАЦИЯ ГРИНЧА ---
+# Пути к локальным файлам
+GRINCH_FRAMES = ["grinch_1.jpg", "grinch_2.jpg", "grinch_3.jpg", "grinch_4.jpg"]
+
+# Ссылки (заглушки, если файлов нет)
+GRINCH_URLS = [
+    "https://img.freepik.com/premium-photo/snowball-flight-winter-background_1045168-101.jpg", # Кадр 1: Полет
+    "https://img.freepik.com/premium-photo/grinch-hit-by-snowball-funny_1045168-102.jpg",      # Кадр 2: Удар
+    "https://img.freepik.com/premium-photo/grinch-running-away-with-bag_1045168-103.jpg",       # Кадр 3: Побег
+    "https://img.freepik.com/premium-photo/grinch-running-away-with-bag_1045168-103.jpg"
+]
+
+# Админы (без @)
+ADMINS = ['silentglove', 'octoberchaos']
+
+# Логотип (если есть файл logo.jpg - юзаем его, иначе ссылку)
+LOGO_PATH = "logo new year.png"
+DEFAULT_LOGO_URL = "https://storage.googleapis.com/pod_public/1300/243765.jpg"
+
+# --- ИВЕНТ ПУГАЛО ---
+# Пути к файлам (закинь картинки scarecrow_bad.jpg и scarecrow_good.jpg в папку)
+SCARECROW_BAD_PATH = "scarecrow_bad.jpg"   # Пугало в воронах
+SCARECROW_GOOD_PATH = "scarecrow_good.jpg" # Довольное пугало
+
+# Ссылки заглушки
+URL_SCARECROW_BAD = "https://img.freepik.com/premium-photo/scarecrow-standing-cornfield-with-crows-flying-around-generated-by-ai_1038957-257.jpg"
+URL_SCARECROW_GOOD = "https://img.freepik.com/premium-photo/cute-scarecrow-cartoon-character-generated-ai_406939-9305.jpg"
+
+SCARECROW_COOLDOWN = 10800  # 3 часа (в секундах)
+BOOST_DURATION = 1800       # 30 минут действия буста (в секундах)
+
+# --- БАЛАНС И ЦЕНЫ ---
+MILK_PER_CLICK = 1
+BASE_PLANT_COST = 5
+BASE_CASINO_COST = 10
+FERT_EFFECT = 5
+
+# --- БАЗА ДАННЫХ ---
+DB_NAME = 'farm_v4.db'
+
+# --- ANTI-SPAM ---
+SPAM_LIMIT = 12 # Чуть поднял лимит, чтобы веселее кликать
+MUTE_TIME = 60
+user_timestamps = {}
+muted_users = {}
+
+
+
+# 1. Нажали "Продать" в инвентаре
+@dp.callback_query(F.data.startswith("sell_init_"))
+async def sell_init(cb: CallbackQuery, state: FSMContext):
+    card_id = cb.data.split("_")[2]
+    
+    await state.update_data(card_id=card_id)
+    await state.set_state(MarketStates.waiting_for_price)
+    
+    card_name = CARDS[card_id]["name"]
+    await cb.message.answer(f"💰 За сколько помидоров ты хочешь продать <b>{card_name}</b>?\n\n✍️ <i>Напиши цену числом (например: 1000)</i>", parse_mode="HTML")
+    await cb.answer()
+
+# 2. Игрок ввел цену
+@dp.message(StateFilter(MarketStates.waiting_for_price))
+async def sell_confirm(message: types.Message, state: FSMContext):
+    try:
+        price = int(message.text)
+        if price < 1: raise ValueError
+    except:
+        await message.answer("❌ Введи нормальное число больше 0.")
+        return
+
+    data = await state.get_data()
+    card_id = data['card_id']
+    user_id = message.from_user.id
+    username = message.from_user.full_name
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Проверяем, есть ли карта (защита от дюпа)
+        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id)) as c:
+            row = await c.fetchone()
+            
+        if not row or row[0] < 1:
+            await message.answer("❌ У тебя уже нет этой карты!")
+            await state.clear()
+            return
+
+        # 1. Забираем карту у игрока
+        new_count = row[0] - 1
+        if new_count == 0:
+            await db.execute('DELETE FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id))
+        else:
+            await db.execute('UPDATE user_cards SET count = ? WHERE user_id = ? AND card_id = ?', (new_count, user_id, card_id))
+            
+        # 2. Выставляем на рынок
+        await db.execute('INSERT INTO market (seller_id, seller_name, card_id, price) VALUES (?, ?, ?, ?)', 
+                         (user_id, username, card_id, price))
+        await db.commit()
+
+    await message.answer(f"✅ Лот создан! <b>{CARDS[card_id]['name']}</b> выставлен за {price} 🍅.", parse_mode="HTML")
+    await state.clear()
+
+# Путь к папке с картинками
+CARDS_DIR = "img_cards"
+
+async def send_card_info(message: types.Message, card_id: str, count: int = 1):
+    if card_id not in CARDS:
+        await message.answer("Ошибка: карта не найдена.")
+        return
+
+    card = CARDS[card_id]
+    rarity_data = RARITY_INFO.get(card["rarity"], RARITY_INFO["common"])
+    
+    # Текст карточки
+    caption = (
+        f"{rarity_data['icon']} <b>{card['name']}</b>\n"
+        f"➖➖➖➖➖➖➖➖\n"
+        f"🎭 Редкость: {rarity_data['name']}\n"
+        f"📜 Описание: <i>{card.get('desc', 'Нет описания')}</i>\n"
+        f"🎒 У тебя в наличии: <b>{count} шт.</b>"
+    )
+
+    # Кнопка продажи
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💰 Продать карту", callback_data=f"sell_init_{card_id}")]
+    ])
+
+    # Пытаемся найти картинку
+    image_filename = card.get("img", "default.jpg") # Если нет ключа, ищем default.jpg
+    image_path = os.path.join(CARDS_DIR, image_filename)
+    
+    try:
+        # Проверяем, существует ли файл
+        if os.path.exists(image_path):
+            photo = FSInputFile(image_path)
+            await message.answer_photo(photo, caption=caption, reply_markup=kb, parse_mode="HTML")
+        else:
+            # Если файла нет - кидаем просто текст
+            await message.answer(f"🖼 <i>(Картинка {image_filename} не найдена)</i>\n\n" + caption, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"Ошибка отправки фото: {e}\n\n" + caption, reply_markup=kb, parse_mode="HTML")
+
+# --- ПРОДВИНУТЫЙ РЫНОК ---
+
+async def get_market_page(page: int = 0):
+    LIMIT = 1  # Показываем по 1 лоту на странице (как карточки в Тиндере/Авито)
+    offset = page * LIMIT
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Считаем всего лотов
+        async with db.execute('SELECT COUNT(*) FROM market') as c:
+            total_lots = (await c.fetchone())[0]
+            
+        # Берем конкретный лот для текущей страницы
+        async with db.execute('SELECT lot_id, seller_name, card_id, price, seller_id FROM market ORDER BY lot_id DESC LIMIT ? OFFSET ?', (LIMIT, offset)) as c:
+            lot = await c.fetchone()
+            
+    return lot, total_lots
+
+@dp.message(F.text == "🏪 Рынок игроков")
+async def show_market(message: types.Message):
+    await show_market_page(message, page=0)
+
+async def show_market_page(message_or_call, page=0):
+    lot, total = await get_market_page(page)
+    
+    if not lot:
+        text = "🏪 <b>Рынок пуст!</b>\nСтань первым продавцом, выставив карту из инвентаря."
+        if isinstance(message_or_call, CallbackQuery):
+            await message_or_call.message.edit_text(text, parse_mode="HTML")
+        else:
+            await message_or_call.answer(text, parse_mode="HTML")
+        return
+
+    # Распаковка данных лота
+    lot_id, seller, card_id, price, seller_id = lot
+    card_info = CARDS.get(card_id, {"name": "Неизвестная карта", "rarity": "common"})
+    rarity_icon = RARITY_INFO.get(card_info.get("rarity", "common"), {}).get("icon", "⚪️")
+    
+    text = (
+        f"🏪 <b>РЫНОК (Лот {page + 1}/{total})</b>\n"
+        f"➖➖➖➖➖➖➖➖\n"
+        f"{rarity_icon} <b>{card_info['name']}</b>\n\n"
+        f"👤 Продавец: {seller}\n"
+        f"💰 Цена: <b>{format_num(price)}</b> 🍅\n"
+        f"➖➖➖➖➖➖➖➖"
+    )
+
+    # Кнопки навигации и покупки
+    buttons = []
+    
+    # Кнопка покупки или "Мой лот"
+    user_id = message_or_call.from_user.id
+    if user_id == seller_id:
+        buy_btn = InlineKeyboardButton(text="🗑 Снять с продажи", callback_data=f"market_delete_{lot_id}")
+    else:
+        buy_btn = InlineKeyboardButton(text=f"🛒 Купить за {price}", callback_data=f"buy_lot_{lot_id}")
+    
+    buttons.append([buy_btn])
+    
+    # Стрелки навигации
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"market_page_{page-1}"))
+    
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page+1}", callback_data="ignore"))
+    
+    if (page + 1) < total:
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"market_page_{page+1}"))
+        
+    buttons.append(nav_row)
+    buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"market_page_{page}")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    if isinstance(message_or_call, CallbackQuery):
+        await message_or_call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await message_or_call.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# Хендлер перелистывания
+@dp.callback_query(F.data.startswith("market_page_"))
+async def market_nav(cb: CallbackQuery):
+    page = int(cb.data.split("_")[2])
+    await show_market_page(cb, page)
+    await cb.answer()
+
+# Хендлер удаления своего лота
+@dp.callback_query(F.data.startswith("market_delete_"))
+async def market_delete_own(cb: CallbackQuery):
+    lot_id = int(cb.data.split("_")[2])
+    user_id = cb.from_user.id
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Проверяем, что лот принадлежит юзеру
+        async with db.execute('SELECT card_id FROM market WHERE lot_id = ? AND seller_id = ?', (lot_id, user_id)) as c:
+            row = await c.fetchone()
+            
+        if not row:
+            await cb.answer("❌ Лот не найден или уже продан.", show_alert=True)
+            await show_market_page(cb, 0)
+            return
+            
+        card_id = row[0]
+        
+        # Удаляем лот
+        await db.execute('DELETE FROM market WHERE lot_id = ?', (lot_id,))
+        
+        # Возвращаем карту
+        # Проверяем, есть ли уже запись в инвентаре
+        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id)) as c:
+            exists = await c.fetchone()
+            
+        if exists:
+            await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (user_id, card_id))
+        else:
+            await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (user_id, card_id))
+            
+        await db.commit()
+        
+    await cb.answer("✅ Лот удален, карта возвращена!")
+    await show_market_page(cb, 0)
+
+@dp.callback_query(F.data == "ignore")
+async def ignore_click(cb: CallbackQuery):
+    await cb.answer()
+
+# Покупка лота
+@dp.callback_query(F.data.startswith("buy_lot_"))
+async def buy_lot(cb: CallbackQuery):
+    lot_id = int(cb.data.split("_")[2])
+    buyer_id = cb.from_user.id
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        # 1. Проверяем лот (не купили ли его уже)
+        async with db.execute('SELECT seller_id, card_id, price FROM market WHERE lot_id = ?', (lot_id,)) as c:
+            lot = await c.fetchone()
+            
+        if not lot:
+            await cb.answer("❌ Лот уже куплен или удален!", show_alert=True)
+            try: await cb.message.delete() # Удаляем устаревшее сообщение
+            except: pass
+            return
+            
+        seller_id, card_id, price = lot
+        
+        if buyer_id == seller_id:
+            await cb.answer("🤨 Ты не можешь купить у самого себя!")
+            return
+
+        # 2. Проверяем деньги покупателя
+        async with db.execute('SELECT tomatoes FROM users WHERE user_id = ?', (buyer_id,)) as c:
+            buyer_tom = (await c.fetchone())[0]
+            
+        if buyer_tom < price:
+            await cb.answer(f"❌ Не хватает помидоров! Нужно {price}", show_alert=True)
+            return
+
+        # --- ТРАНЗАКЦИЯ ---
+        # Списываем у покупателя
+        await db.execute('UPDATE users SET tomatoes = tomatoes - ? WHERE user_id = ?', (price, buyer_id))
+        
+        # Начисляем продавцу
+        # (Можно добавить налог рынка 10% для вывода валюты из игры: int(price * 0.9))
+        await db.execute('UPDATE users SET tomatoes = tomatoes + ? WHERE user_id = ?', (price, seller_id))
+        
+        # Выдаем карту покупателю
+        # Проверяем, есть ли уже такая карта у покупателя
+        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (buyer_id, card_id)) as c:
+            exists = await c.fetchone()
+        
+        if exists:
+            await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (buyer_id, card_id))
+        else:
+            await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (buyer_id, card_id))
+            
+        # Удаляем лот
+        await db.execute('DELETE FROM market WHERE lot_id = ?', (lot_id,))
+        
+        await db.commit()
+        
+    await cb.answer("✅ Успешно куплено!")
+    await cb.message.answer(f"🎉 Ты купил <b>{CARDS[card_id]['name']}</b> за {price} 🍅!", parse_mode="HTML")
+    
+    # Уведомляем продавца (если бот не в бане)
+    try:
+        await bot.send_message(seller_id, f"🤑 Твой лот <b>{CARDS[card_id]['name']}</b> купили за {price} 🍅!")
+    except: pass
+
+# В секции FSM
+class AdminStates(StatesGroup):
+    waiting_for_broadcast = State()
+    
+# Простая пасхалка на текст
+@dp.message(F.text.lower().contains("я читер"))
+async def easter_egg_1(message: types.Message):
+    await message.answer("👀 <b>Я слежу за тобой...</b>\nАдмины уже выехали.", parse_mode="HTML")
+
+@dp.message(F.text.lower().contains("хочу денег"))
+async def easter_egg_2(message: types.Message):
+    # Даем 1 помидор
+    user = await get_user(message.from_user.id)
+    await update_stat(message.from_user.id, "tomatoes", user[3] + 1)
+    await message.answer("🍅 Держи помидорку, бедняк.")
+
+@dp.message(F.text == "sudo rm -rf /")
+async def easter_egg_linux(message: types.Message):
+    await message.answer("🤖 <i>Kernel panic... System failure...</i>\n\nШучу. Не ломай меня.", parse_mode="HTML")
+
+# --- БД: ИНИЦИАЛИЗАЦИЯ И МИГРАЦИИ ---
+async def init_db():
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Базовая таблица (если создается с нуля)
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                milk INTEGER DEFAULT 0,
+                tomatoes INTEGER DEFAULT 0,
+                click_level INTEGER DEFAULT 1,
+                tomato_level INTEGER DEFAULT 1, 
+                fertilizer INTEGER DEFAULT 0,
+                sosi_count INTEGER DEFAULT 0,
+                is_banned INTEGER DEFAULT 0,
+                luck_level INTEGER DEFAULT 0,
+                safety_level INTEGER DEFAULT 0,
+                eco_level INTEGER DEFAULT 0,
+                casino_level INTEGER DEFAULT 0,
+                gmo_level INTEGER DEFAULT 0
+            )
+        ''')
+        # 1. Таблица инвентаря карт (кто владеет, какая карта, сколько штук)
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS user_cards (
+                user_id INTEGER,
+                card_id TEXT,
+                count INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, card_id)
+            )
+        ''')
+        
+        # 2. Таблица РЫНКА (кто продает, что, почем, уникальный ID лота)
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS market (
+                lot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seller_id INTEGER,
+                seller_name TEXT,
+                card_id TEXT,
+                price INTEGER
+            )
+        ''')
+        
+        # Миграции для user_cards не нужны, если таблица новая.
+        await db.commit()
+        # Миграции: Добавляем новые колонки в старую базу, если их нет
+        new_columns = [
+            ("luck_level", "INTEGER DEFAULT 0"),   # Удача (шанс дропа)
+            ("safety_level", "INTEGER DEFAULT 0"), # Крышка (анти-разлив)
+            ("eco_level", "INTEGER DEFAULT 0"),    # Насос (дешевле полив)
+            ("casino_level", "INTEGER DEFAULT 0"), # Шулер (дешевле казино)
+            ("gmo_level", "INTEGER DEFAULT 0"),     # ГМО (кэшбек молока)
+            ("last_daily_claim", "REAL DEFAULT 0"),
+            ("reg_date", "REAL DEFAULT 0"),
+            ("last_scarecrow", "REAL DEFAULT 0"),    # Время последней игры с пугалом
+            ("active_boost", "TEXT DEFAULT ''"),     # Тип активного буста (milk_x2, water_free и т.д.)
+            ("boost_end", "REAL DEFAULT 0"),          # Время окончания буста
+            ("mandarins", "INTEGER DEFAULT 0"),
+            ("prefix", "TEXT DEFAULT NULL"),        # Префикс (например [VIP])
+            ("custom_status", "TEXT DEFAULT 'Фермер'"), # Статус в профиле
+            ("is_admin", "INTEGER DEFAULT 0"),   # 1 - админ, 0 - нет
+            ("last_active", "REAL DEFAULT 0")    # Время последней активности
+        ]
+        
+        for col, definition in new_columns:
+            try:
+                await db.execute(f'ALTER TABLE users ADD COLUMN {col} {definition}')
+            except:
+                pass # Колонка уже есть
+        # Для старых пользователей проставим текущее время, если там 0
+        current_time = time.time()
+        await db.execute(f'UPDATE users SET reg_date = ? WHERE reg_date = 0', (current_time,))
+        await db.commit()
+
+async def get_user(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT * FROM users WHERE user_id = ?', (user_id,)) as cursor:
+            user = await cursor.fetchone()
+            if not user:
+                # Создание нового юзера
+                await db.execute('INSERT INTO users (user_id, username, reg_date) VALUES (?, ?, ?)',
+                                 (user_id, "Newbie", time.time()))
+                await db.commit()
+                return await get_user(user_id) # Рекурсия чтобы вернуть полный ряд
+            return user
+
+async def update_username(user_id, name):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (name, user_id))
+        await db.commit()
+
+async def update_stat(user_id, column, value):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(f'UPDATE users SET {column} = ? WHERE user_id = ?', (value, user_id))
+        await db.commit()
+
+def get_shop_text(user):
+    # user[3] - это помидоры
+    
+    return (
+        f"🏪 <b>Новогодняя Лавка</b>\n"
+        f"Ваш баланс: <code>{format_num(user[3])}</code> 🍅\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"<b>📋 ОПИСАНИЕ ТОВАРОВ:</b>\n\n"
+        f"💪 <b>Бицепс:</b> Больше молока за один клик (+1)\n"
+        f"🧬 <b>Сорт:</b> Выше шанс собрать двойной урожай (x2)\n"
+        f"🍀 <b>Удача:</b> Чаще выпадает химия и бонусы при дойке\n"
+        f"🛡 <b>Крышка:</b> Снижает шанс пролить молоко мимо ведра\n"
+        f"📉 <b>Насос:</b> Снижает расход молока на полив грядки\n"
+        f"🃏 <b>Шулер:</b> Снижает стоимость прокрутки слотов\n"
+        f"🧪 <b>ГМО:</b> Шанс вернуть 50% молока после полива\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"👇 <b>Нажми кнопку, чтобы купить:</b>"
+    )
+
+# --- КРАСИВЫЙ ДИЗАЙН КЛАВИАТУР ---
+def main_keyboard():
+    kb = [
+        # Основной геймплей всегда под рукой
+        [KeyboardButton(text="❄️ Трясти елку (Доить)"), KeyboardButton(text="⛄️ Лепить снеговика (Полить)")],
+        # Категории
+        [KeyboardButton(text="🏰 Город"), KeyboardButton(text="🎡 Развлечения")],
+        # Профиль отдельно
+        [KeyboardButton(text="👤 Мой Профиль")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Главное меню")
+
+def town_keyboard():
+    kb = [
+        [KeyboardButton(text="🎅 Лавка Санты"), KeyboardButton(text="🎒 Склад")],
+        [KeyboardButton(text="🏆 Лидеры"), KeyboardButton(text="📟 Секретный код")],
+        [KeyboardButton(text="🔙 Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Район: Город")
+
+def fun_keyboard():
+    kb = [
+        [KeyboardButton(text="🎲 Крутить слот"), KeyboardButton(text="🎁 Подарок (Ежедн.)")],
+        [KeyboardButton(text="👺 Гринч (Ивент)")],
+        [KeyboardButton(text="🔙 Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Район: Развлечения")
+
+def upgrades_keyboard(u):
+    # u - это row пользователя. Индексы:
+    # 4-Click, 5-Tomato, 9-Luck, 10-Safety, 11-Eco, 12-Casino, 13-GMO
+    
+    # Расчет цен (формулы)
+    p_click = 10 * u[4]
+    p_tomato = 50 * u[5]
+    p_luck = 30 * (u[9] + 1)
+    p_safe = 25 * (u[10] + 1)
+    p_eco = 100 * (u[11] + 1)
+    p_cas = 40 * (u[12] + 1)
+    p_gmo = 75 * (u[13] + 1)
+
+    kb = [
+        [InlineKeyboardButton(text=f"💪 Бицепс ({p_click}🍅)", callback_data="buy_click"),
+         InlineKeyboardButton(text=f"🧬 Сорт ({p_tomato}🍅)", callback_data="buy_tomato")],
+        
+        [InlineKeyboardButton(text=f"🍀 Удача ({p_luck}🍅)", callback_data="buy_luck"),
+         InlineKeyboardButton(text=f"🛡 Крышка ({p_safe}🍅)", callback_data="buy_safe")],
+         
+        [InlineKeyboardButton(text=f"📉 Насос ({p_eco}🍅)", callback_data="buy_eco"),
+         InlineKeyboardButton(text=f"🃏 Шулер ({p_cas}🍅)", callback_data="buy_cas")],
+         
+        [InlineKeyboardButton(text=f"🧪 ГМО ({p_gmo}🍅)", callback_data="buy_gmo")],
+        
+        [InlineKeyboardButton(text="🔄 Обновить цены", callback_data="refresh_upgrades")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def inventory_keyboard(has_fert):
+    kb = []
+    if has_fert:
+        kb.append([InlineKeyboardButton(text="🧪 Применить химию (+5🍅)", callback_data="use_fertilizer")])
+    kb.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_inv")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ---
+async def delete_later(msg, delay=2):
+    await asyncio.sleep(delay)
+    try: await msg.delete()
+    except: pass
+
+def format_num(num):
+    return "{:,}".format(num).replace(",", " ")
+
+def get_progress_bar(value, max_value=10):
+    # Визуальная полоска
+    percent = min(1.0, value / max_value)
+    blocks = int(percent * 10)
+    return "▓" * blocks + "░" * (10 - blocks)
+
+@dp.callback_query(F.data == "check_subscription")
+async def check_subscription_handler(cb: CallbackQuery):
+    # Если код дошел сюда, значит Middleware пропустил юзера (он подписан)
+    await cb.message.delete() # Удаляем сообщение с требованием подписки
+    await cb.answer("✅ Спасибо за подписку! Приятной игры!")
+    
+    # Можно сразу отправить приветствие
+    await cb.message.answer("🎉 Добро пожаловать на Ферму! Жми кнопки меню.", reply_markup=main_keyboard())
+
+# --- ЛОГИКА ИГРЫ ---
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    user = await get_user(message.from_user.id)
+    if user[8]: return # Ban
+
+    caption = (
+        f"🌾 <b>Ферма v7.0(Стабильная) </b>\n\n"
+        f"Привет, {message.from_user.first_name}!\n"
+        f"Мы завезли новые технологии. Теперь ты можешь качать удачу, экономить на поливе и даже мухлевать в казино!\n\n"
+        f"👇 <b>Начинай работу:</b>"
+    )
+    
+    try:
+        photo = FSInputFile(LOGO_PATH)
+        await message.answer_photo(photo, caption=caption, reply_markup=main_keyboard(), parse_mode="HTML")
+    except:
+        await message.answer_photo(DEFAULT_LOGO_URL, caption=caption, reply_markup=main_keyboard(), parse_mode="HTML")
+
+# --- ДОЙКА (С УЧЕТОМ НОВЫХ СТАТОВ) ---
+@dp.message(F.text.in_({"🐮 Жмякнуть вымя", "❄️ Трясти елку (Доить)"}))
+async def milk_handler(message: types.Message):
+    # УБРАЛ удаление сообщения игрока, чтобы не мелькало
+    # try: await message.delete()
+    # except: pass
+    
+    user_id = message.from_user.id
+    
+    # Получаем данные и бусты
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT * FROM users WHERE user_id = ?', (user_id,)) as c:
+            user = await c.fetchone()
+        async with db.execute('SELECT active_boost, boost_end FROM users WHERE user_id = ?', (user_id,)) as c:
+            b_row = await c.fetchone()
+            active_boost = b_row[0] if b_row else ""
+            boost_end = b_row[1] if b_row else 0
+
+    is_boosted_milk = (time.time() < boost_end and active_boost == "milk_x2")
+    is_boosted_luck = (time.time() < boost_end and active_boost == "luck_max")
+
+    base_milk = MILK_PER_CLICK * user[4]
+    if is_boosted_milk: base_milk *= 2
+
+    drop_chance = 1.0 if is_boosted_luck else (0.15 + (user[9] * 0.02))
+    spill_chance = max(0, 0.05 - (user[10] * 0.01))
+
+    rand = random.random()
+    boost_icon = "⚡️x2 " if is_boosted_milk else ""
+    
+    # Формируем ответ
+    if rand < spill_chance:
+        lost = max(1, int(user[2] * 0.1))
+        await update_stat(user_id, "milk", max(0, user[2] - lost))
+        text = f"💢 <b>Черт!</b> Ты пролил {lost} л. (Качай «Крышку»!)"
+    
+    elif rand > (1 - drop_chance):
+        await update_stat(user_id, "fertilizer", user[6] + 1)
+        await update_stat(user_id, "milk", user[2] + base_milk)
+        text = f"🥛 {boost_icon}+{base_milk} л.\n🎁 <b>Найдена химия!</b>"
+    
+    else:
+        await update_stat(user_id, "milk", user[2] + base_milk)
+        text = f"🥛 Пшш... {boost_icon}+{base_milk} л."
+
+    # ОТПРАВЛЯЕМ СООБЩЕНИЕ И ЯВНО ПРИКРЕПЛЯЕМ КЛАВИАТУРУ
+    # И самое главное - НЕ УДАЛЯЕМ ЕГО ПОТОМ
+    await message.answer(text, reply_markup=main_keyboard(), parse_mode="HTML")
+
+# --- ПОЛИВ (С УЧЕТОМ ЭКОНОМИИ И ГМО) ---
+@dp.message(F.text.in_({"💦 Полить грядку", "⛄️ Лепить снеговика (Полить)"}))
+async def plant_handler(message: types.Message):
+    # УБРАЛ удаление сообщения игрока
+    # try: await message.delete()
+    # except: pass
+    
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT active_boost, boost_end FROM users WHERE user_id = ?', (user_id,)) as c:
+            b_row = await c.fetchone()
+            active_boost = b_row[0] if b_row else ""
+            boost_end = b_row[1] if b_row else 0
+
+    is_boosted_tom = (time.time() < boost_end and active_boost == "tomato_x2")
+    is_free_water = (time.time() < boost_end and active_boost == "water_free")
+
+    cost = 0 if is_free_water else int(max(1, BASE_PLANT_COST - (user[11] * 0.5)))
+    
+    if user[2] >= cost:
+        crit_chance = user[5] * 0.05
+        base_yield = 2 if random.random() < crit_chance else 1
+        if is_boosted_tom: base_yield *= 2
+        
+        refund_text = ""
+        real_cost = cost
+        if not is_free_water and cost > 0:
+            gmo_chance = user[13] * 0.05
+            if random.random() < gmo_chance:
+                refund = int(cost * 0.5)
+                real_cost = cost - refund
+                refund_text = f"\n♻️ <b>ГМО!</b> Возврат {refund} л."
+
+        await update_stat(user_id, "milk", user[2] - real_cost)
+        await update_stat(user_id, "tomatoes", user[3] + base_yield)
+        
+        boost_msg = "⚡️x2 " if is_boosted_tom else ""
+        free_msg = " (Бесплатно!)" if is_free_water else f" (-{real_cost} л.)"
+        
+        text = f"🍅 {boost_msg}Урожай: +{base_yield} шт.{free_msg}{refund_text}"
+    else:
+        text = f"💧 Нужно {cost} л. молока! (Качай «Насос»)"
+    
+    # ОТПРАВЛЯЕМ И НЕ УДАЛЯЕМ
+    await message.answer(text, reply_markup=main_keyboard(), parse_mode="HTML")
+
+    # НОВОГОДНИЙ ДРОП
+    mandarin_drop = ""
+    if random.random() < 0.30: # 30% шанс
+        mandarins_found = random.randint(1, 3)
+        # Получаем текущие мандарины (лучше сделать это в начале функции в user)
+        # Но для примера сделаем быстрый update:
+        current_mandarins = (await get_user(message.from_user.id))[15] # Проверь индекс колонки! Или используй SELECT mandarins
+        await update_stat(message.from_user.id, "mandarins", current_mandarins + mandarins_found)
+        mandarin_drop = f"\n🍊 <b>Найдено мандаринов: {mandarins_found} шт!</b>"
+        
+    # Если мандарины выпали, отправляем отдельное сообщение
+    if mandarin_drop:
+        await message.answer(f"🎉 Сюрприз в сугробе!{mandarin_drop}", reply_markup=main_keyboard())
+
+
+# --- СИСТЕМА ТОПОВ ---
+
+# Форматирование времени (из секунд в дни/часы)
+def format_time_spent(seconds_played):
+    days = int(seconds_played // 86400)
+    hours = int((seconds_played % 86400) // 3600)
+    if days > 0:
+        return f"{days} д. {hours} ч."
+    return f"{hours} ч. {int((seconds_played % 3600) // 60)} мин."
+
+# Генерация текста и кнопок
+async def get_leaderboard_data(top_type="tomatoes"):
+    # top_type может быть: 'tomatoes', 'milk', 'time'
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        if top_type == "tomatoes":
+            query = 'SELECT username, tomatoes FROM users ORDER BY tomatoes DESC LIMIT 10'
+            title = "🍅 ТОП МАГНАТОВ (Помидоры)"
+            metric_suffix = " 🍅"
+            prev_type, next_type = "time", "milk" # Стрелки
+            
+        elif top_type == "milk":
+            query = 'SELECT username, milk FROM users ORDER BY milk DESC LIMIT 10'
+            title = "🥛 ТОП ДОЯРОК (Молоко)"
+            metric_suffix = " л."
+            prev_type, next_type = "tomatoes", "time"
+            
+        elif top_type == "time":
+            # Сортируем по reg_date ASC (кто раньше зарегался - у того больше времени)
+            query = 'SELECT username, reg_date FROM users ORDER BY reg_date ASC LIMIT 10'
+            title = "⏳ ТОП ОЛДОВ (В игре)"
+            metric_suffix = ""
+            prev_type, next_type = "milk", "tomatoes"
+
+        async with db.execute(query) as c:
+            res = await c.fetchall()
+
+    text = f"🏆 <b>{title}</b>\n\n"
+    
+    if not res:
+        text += "<i>Пока пусто...</i>"
+    
+    current_time = time.time()
+    
+    for i, row in enumerate(res):
+        name = row[0]
+        value = row[1]
+        
+        # Красивое отображение значений
+        if top_type == "time":
+            # Считаем сколько времени прошло с регистрации
+            val_str = format_time_spent(current_time - value)
+        else:
+            val_str = f"{format_num(value)}{metric_suffix}"
+            
+        # Медали для топ 3
+        medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
+        
+        text += f"{medal} <b>{name}</b> — {val_str}\n"
+
+    # Клавиатура переключения
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⬅️", callback_data=f"top_{prev_type}"),
+            InlineKeyboardButton(text="🔄 Обновить", callback_data=f"top_{top_type}"),
+            InlineKeyboardButton(text="➡️", callback_data=f"top_{next_type}")
+        ]
+    ])
+    
+    return text, kb
+
+# --- КАЗИНО (С УЧЕТОМ ШУЛЕРА) ---
+@dp.message(F.text == "🎲 Крутить слот")
+async def casino_handler(message: types.Message):
+    user = await get_user(message.from_user.id)
+    # Stats: 12-CasinoLvl
+    
+    # Ставка: База 10 - 1 за уровень Шулера (Мин 2)
+    bet = max(2, BASE_CASINO_COST - user[12])
+    
+    if user[3] < bet:
+        msg = await message.answer(f"❌ Ставка {bet} помидоров. У тебя мало!")
+        asyncio.create_task(delete_later(msg))
+        return
+
+    await update_stat(message.from_user.id, "tomatoes", user[3] - bet)
+    dice_msg = await message.answer_dice(emoji="🎰")
+    await asyncio.sleep(2)
+    
+    # Логика слота (значение dice.value от 1 до 64)
+    val = dice_msg.dice.value
+    win = 0
+    
+    # 1, 22, 43, 64 - это комбинации (примерно)
+    # Упростим: Value в dice 🎰: 
+    # 1=bar, 22=grapes, 43=lemon, 64=seven (Jackpot)
+    
+    if val == 64: # Три семерки
+        win = bet * 10
+        res = f"🤑 <b>ДЖЕКПОТ!!!</b> (+{win})"
+    elif val == 43: # Три лимона
+        win = bet * 3
+        res = f"🍋 <b>Сочно!</b> (+{win})"
+    elif val == 22: # Виноград
+        win = bet * 2
+        res = f"🍇 <b>Вкусно!</b> (+{win})"
+    elif val == 1: # Бар
+        win = bet
+        res = f"😐 <b>Возврат.</b> (+{win})"
+    else:
+        res = f"📉 <b>Мимо.</b> (-{bet})"
+    
+    if win > 0:
+        await update_stat(message.from_user.id, "tomatoes", (user[3] - bet) + win)
+    
+    await message.answer(res, parse_mode="HTML")
+
+# --- МАГАЗИН (ХЕНДЛЕРЫ НОВЫХ ПОКУПОК) ---
+@dp.message(F.text.in_({"⚡️ Магазин", "🎅 Лавка Санты"}))
+async def shop_menu(message: types.Message):
+    user = await get_user(message.from_user.id)
+    
+    # Используем нашу новую функцию для текста
+    text = get_shop_text(user)
+    
+    await message.answer(text, reply_markup=upgrades_keyboard(user), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def buy_upgrade(cb: CallbackQuery):
+    type_up = cb.data.split("_")[1] # click, tomato, luck, safe, eco, cas, gmo
+    user = await get_user(cb.from_user.id)
+    tom = user[3]
+    
+    # Определение цены и колонки
+    cost = 0
+    col = ""
+    new_lvl = 0
+    
+    if type_up == "click":
+        cost = 10 * user[4]
+        col = "click_level"
+        new_lvl = user[4] + 1
+    elif type_up == "tomato":
+        cost = 50 * user[5]
+        col = "tomato_level"
+        new_lvl = user[5] + 1
+    elif type_up == "luck":
+        cost = 30 * (user[9] + 1)
+        col = "luck_level"
+        new_lvl = user[9] + 1
+    elif type_up == "safe":
+        cost = 25 * (user[10] + 1)
+        col = "safety_level"
+        new_lvl = user[10] + 1
+    elif type_up == "eco":
+        cost = 100 * (user[11] + 1)
+        col = "eco_level"
+        new_lvl = user[11] + 1
+    elif type_up == "cas":
+        cost = 40 * (user[12] + 1)
+        col = "casino_level"
+        new_lvl = user[12] + 1
+    elif type_up == "gmo":
+        cost = 75 * (user[13] + 1)
+        col = "gmo_level"
+        new_lvl = user[13] + 1
+
+    if tom >= cost:
+        await update_stat(cb.from_user.id, "tomatoes", tom - cost)
+        await update_stat(cb.from_user.id, col, new_lvl)
+        await cb.answer(f"✅ Улучшение '{type_up.upper()}' куплено!")
+        
+        # Обновляем меню
+        u = await get_user(cb.from_user.id)
+        try: await cb.message.edit_text(
+            # Редактируем сообщение, используя тот же красивый текст
+                get_shop_text(u), 
+                reply_markup=upgrades_keyboard(u), 
+                parse_mode="HTML"
+        )
+        except: pass
+    else:
+        await cb.answer(f"❌ Нужно {cost} помидоров!", show_alert=True)
+
+@dp.callback_query(F.data == "refresh_upgrades")
+async def refresh_shop(cb: CallbackQuery):
+    u = await get_user(cb.from_user.id)
+    try: 
+        await cb.message.edit_text(
+            get_shop_text(u), 
+            reply_markup=upgrades_keyboard(u), 
+            parse_mode="HTML"
+        )
+    except: pass
+    await cb.answer()
+
+# --- ПРОФИЛЬ (ОБНОВЛЕННЫЙ) ---
+@dp.message(F.text == "👤 Мой Профиль")
+async def profile_new(m: types.Message):
+    user = await get_user(m.from_user.id)
+    # 4-Click, 5-Tom, 9-Luck, 10-Safe, 11-Eco, 12-Cas, 13-GMO
+    # Индексы могут сместиться, лучше использовать именованный доступ или перепроверить SELECT *
+    # Предположим, мы добавили prefix и custom_status последними.
+    
+    # Чтобы не гадать с индексами, сделаем точечный запрос для красоты:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT prefix, custom_status FROM users WHERE user_id = ?', (m.from_user.id,)) as c:
+            meta = await c.fetchone()
+            prefix = meta[0]
+            status = meta[1]
+
+    # Формирование имени с префиксом
+    display_name = m.from_user.full_name
+    if prefix:
+        display_name = f"<b>[{prefix}]</b> {display_name}"
+
+    text = (
+        f"👤 <b>КАРТОЧКА ФЕРМЕРА</b>\n"
+        f"➖➖➖➖➖➖➖➖\n"
+        f"🏷 Имя: {display_name}\n"
+        f"🔰 Статус: <b>{status}</b>\n"
+        f"🆔 <code>{user[0]}</code>\n\n"
+        f"📦 <b>РЕСУРСЫ:</b>\n"
+        f"🥛 Молоко: <b>{format_num(user[2])}</b>\n"
+        f"🍅 Помидоры: <b>{format_num(user[3])}</b>\n"
+        f"🍊 Мандарины: <b>{user[15]}</b>\n"
+        f"🧪 Химия: <b>{user[6]}</b>\n\n"
+        f"🧬 <b>ТЕХНОЛОГИИ:</b>\n"
+        f"💪 Бицепс: {user[4]}\n"
+        f"🧬 Сорт: {user[5]}\n"
+        f"🍀 Удача: {user[9]} {get_progress_bar(user[9], 20)}\n"
+        f"🛡 Крышка: {user[10]} {get_progress_bar(user[10], 5)}\n"
+        f"📉 Насос: {user[11]} {get_progress_bar(user[11], 8)}\n"
+        f"🃏 Шулер: {user[12]} {get_progress_bar(user[12], 10)}\n"
+        f"🧪 ГМО: {user[13]} {get_progress_bar(user[13], 15)}"
+    )
+    await m.answer(text, parse_mode="HTML")
+
+# --- СКЛАД ---
+# Хендлер для просмотра списка карт (без фото, чтобы не спамить)
+@dp.message(F.text == "🎴 Карточки") # Или добавь кнопку "🎴 Карточки" в меню
+async def show_cards_list(message: types.Message):
+    user_id = message.from_user.id
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count > 0', (user_id,)) as c:
+            my_cards = await c.fetchall()
+
+    if not my_cards:
+        await message.answer("🎒 Твой альбом с карточками пуст. Купи что-нибудь на рынке!")
+        return
+
+    text = "🎒 <b>ТВОЯ КОЛЛЕКЦИЯ</b>\n<i>Жми на название, чтобы посмотреть арт:</i>\n\n"
+    kb_builder = []
+    
+    for card_id, count in my_cards:
+        if card_id not in CARDS: continue
+        
+        card_data = CARDS[card_id]
+        rarity_icon = RARITY_INFO[card_data["rarity"]]["icon"]
+        
+        # Кнопка: [ 🟢 Альтушка (x2) ] -> по клику покажет фото
+        btn_text = f"{rarity_icon} {card_data['name']} (x{count})"
+        kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"show_card_{card_id}")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_builder)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# Хендлер, который срабатывает при клике на карту в списке
+@dp.callback_query(F.data.startswith("show_card_"))
+async def show_one_card_pic(cb: CallbackQuery):
+    card_id = cb.data.split("_")[2]
+    
+    # Получаем кол-во
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (cb.from_user.id, card_id)) as c:
+            res = await c.fetchone()
+            count = res[0] if res else 0
+
+    await cb.answer() # Убираем часики
+    await send_card_info(cb.message, card_id, count)
+
+# --- АДМИН И ПРОЧЕЕ (без изменений) ---
+@dp.message(F.text == "🏆 Лидеры")
+async def top_users_handler(m: Message):
+    # По умолчанию открываем топ по помидорам
+    text, kb = await get_leaderboard_data("tomatoes")
+    await m.answer(text, reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("top_"))
+async def top_navigation(cb: CallbackQuery):
+    # Получаем тип топа из data (например, top_milk -> milk)
+    top_type = cb.data.split("_")[1]
+    
+    text, kb = await get_leaderboard_data(top_type)
+    
+    # Редактируем сообщение (чтобы не спамить новыми)
+    # Используем try-except, чтобы не было ошибки если текст не изменился
+    try:
+        await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except:
+        pass
+    await cb.answer()
+
+@dp.message(F.text == "📟 Секретный код")
+async def code_start(m: Message, state: FSMContext):
+    await m.answer("Введи код:", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(GameStates.waiting_for_code)
+
+@dp.message(StateFilter(GameStates.waiting_for_code))
+async def code_proc(m: Message, state: FSMContext):
+    if m.text == "winter":
+        u = await get_user(m.from_user.id)
+        if u[7] < 5:
+            await update_stat(m.from_user.id, "milk", u[2] + 500)
+            await update_stat(m.from_user.id, "winter_count", u[7] + 1)
+            await m.answer("✅ +500 молока", reply_markup=main_keyboard())
+        else: await m.answer("Лимит", reply_markup=main_keyboard())
+    else: await m.answer("Неверно", reply_markup=main_keyboard())
+    await state.clear()
+
+async def set_menu(bot: Bot):
+    await bot.set_my_commands([BotCommand(command='/start', description='Главное меню')])
+# --- ХЕНДЛЕРЫ РАССЫЛКИ ---
+
+# --- ЕЖЕДНЕВНЫЕ НАГРАДЫ ---
+
+@dp.message(F.text.in_({"🎁 Ежедневный бонус", "🎁 Подарок (Ежедн.)"}))
+async def daily_reward_menu(message: types.Message):
+    user = await get_user(message.from_user.id)
+    # user[14] - это last_daily_claim (так как мы добавили её последней в миграции)
+    # Но надежнее запросить конкретно, если структура менялась, но пока возьмем по индексу или запросом
+    
+    # Чтобы не путаться с индексами, сделаем отдельный селект для времени
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT last_daily_claim FROM users WHERE user_id = ?', (message.from_user.id,)) as c:
+            res = await c.fetchone()
+            last_claim = res[0] if res else 0
+
+    now = time.time()
+    elapsed = now - last_claim
+
+    if elapsed < DAILY_COOLDOWN:
+        # Еще рано
+        wait_time = DAILY_COOLDOWN - elapsed
+        hours = int(wait_time // 3600)
+        minutes = int((wait_time % 3600) // 60)
+        await message.answer(f"⏳ <b>Сундук закрыт на замок!</b>\nПриходи через {hours} ч. {minutes} мин.", parse_mode="HTML")
+        return
+
+    # Если можно забрать - показываем ЗАКРЫТЫЙ сундук
+    caption = "🎁 <b>Ежедневный сундук</b>\nВнутри может быть молоко, помидоры или джекпот!\n\n👇 Жми кнопку, чтобы открыть:"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔑 Открыть сундук", callback_data="open_daily_chest")]
+    ])
+
+    try:
+        # Пытаемся отправить локальный файл
+        photo = FSInputFile(CHEST_CLOSE_PATH)
+        await message.answer_photo(photo, caption=caption, reply_markup=kb, parse_mode="HTML")
+    except:
+        # Если файла нет - шлем ссылку
+        await message.answer_photo(URL_CHEST_CLOSE, caption=caption, reply_markup=kb, parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "open_daily_chest")
+async def open_chest_handler(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    
+    # Снова проверяем время (защита от быстрых кликов/багов)
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT last_daily_claim FROM users WHERE user_id = ?', (user_id,)) as c:
+            res = await c.fetchone()
+            last_claim = res[0] if res else 0
+
+    if time.time() - last_claim < DAILY_COOLDOWN:
+        await cb.answer("❌ Ты уже открыл сундук сегодня!", show_alert=True)
+        await cb.message.delete()
+        return
+
+    # --- ГЕНЕРАЦИЯ НАГРАДЫ ---
+    
+    # 1. Проверка на ДЖЕКПОТ (1 к 100 000)
+    jackpot_roll = random.randint(1, JACKPOT_CHANCE)
+    
+    reward_text = ""
+    is_jackpot = False
+    
+    if jackpot_roll == 777: # Счастливое число
+        is_jackpot = True
+        prize_tomatoes = 1000000 # Миллион помидоров
+        
+        # Начисляем
+        user = await get_user(user_id)
+        await update_stat(user_id, "tomatoes", user[3] + prize_tomatoes)
+        
+        reward_text = (
+            f"😱 <b>ДЖЕКПОТ!!! НЕВЕРОЯТНО!!!</b> 😱\n"
+            f"ТЫ ВЫБИЛ 1 К {JACKPOT_CHANCE}!\n\n"
+            f"💰 <b>Твой приз:</b> {format_num(prize_tomatoes)} ПОМИДОРОВ!"
+        )
+    else:
+        # Обычный дроп (рандомизация)
+        # Шансы: 50% Молоко, 40% Помидоры, 10% Химия
+        type_roll = random.random()
+        user = await get_user(user_id)
+        
+        if type_roll < 0.5:
+            # Молоко (от 100 до 500)
+            amount = random.randint(100, 500)
+            await update_stat(user_id, "milk", user[2] + amount)
+            reward_text = f"🥛 Внутри оказалось <b>{amount} л. молока</b>!"
+            
+        elif type_roll < 0.9:
+            # Помидоры (от 50 до 200)
+            amount = random.randint(50, 200)
+            await update_stat(user_id, "tomatoes", user[3] + amount)
+            reward_text = f"🍅 Внутри оказалось <b>{amount} помидоров</b>!"
+            
+        else:
+            # Химия (1-3 шт)
+            amount = random.randint(1, 3)
+            await update_stat(user_id, "fertilizer", user[6] + amount)
+            reward_text = f"🧪 Редкость! Ты нашел <b>{amount} шт. химии</b>!"
+
+    # Записываем время получения
+    await update_stat(user_id, "last_daily_claim", time.time())
+
+    # --- ВИЗУАЛИЗАЦИЯ (ОТКРЫТЫЙ СУНДУК) ---
+    
+    # Удаляем старое сообщение с кнопкой
+    try: await cb.message.delete()
+    except: pass
+    
+    final_caption = f"🔓 <b>Сундук открыт!</b>\n\n{reward_text}\n\n<i>Приходи завтра за новой наградой!</i>"
+    
+    try:
+        photo = FSInputFile(CHEST_OPEN_PATH)
+        await cb.message.answer_photo(photo, caption=final_caption, parse_mode="HTML")
+    except:
+        await cb.message.answer_photo(URL_CHEST_OPEN, caption=final_caption, parse_mode="HTML")
+        
+    await cb.answer()
+
+@dp.message(Command("broadcast"))
+async def start_broadcast(message: types.Message, state: FSMContext):
+    # Проверка на админа (убедись, что переменная ADMINS у тебя объявлена выше)
+    if not message.from_user.username or message.from_user.username.lower() not in ADMINS:
+        return
+    
+    await message.answer("📢 <b>Режим рассылки</b>\nНапиши текст сообщения или отправь 'отмена':", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_for_broadcast)
+
+@dp.message(StateFilter(AdminStates.waiting_for_broadcast))
+async def process_broadcast(message: types.Message, state: FSMContext):
+    # Если передумал
+    if message.text.lower() == "отмена":
+        await message.answer("Рассылка отменена.")
+        await state.clear()
+        return
+
+    text_to_send = message.text
+    await message.answer("🚀 Начинаю рассылку...")
+
+    success_count = 0
+    block_count = 0
+    
+    # Берем всех юзеров из БД
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT user_id FROM users') as cursor:
+            users = await cursor.fetchall()
+
+    start_time = time.time()
+
+    # Проходимся по всем
+    for row in users:
+        user_id = row[0]
+        try:
+            # Отправляем сообщение с красивым заголовком
+            await bot.send_message(user_id, f"🔔 <b>ОБЪЯВЛЕНИЕ</b>\n\n{text_to_send}", parse_mode="HTML")
+            success_count += 1
+            await asyncio.sleep(0.05) # Небольшая задержка, чтобы Телеграм не забанил за спам
+        except Exception:
+            # Если бот заблокирован пользователем
+            block_count += 1
+
+    duration = round(time.time() - start_time, 2)
+    
+    await message.answer(
+        f"✅ <b>Рассылка завершена!</b>\n"
+        f"⏱ Время: {duration} сек.\n"
+        f"📩 Доставлено: {success_count}\n"
+        f"🚫 Недоставлено (блок): {block_count}",
+        parse_mode="HTML"
+    )
+
+    # --- ИВЕНТ ПУГАЛО ---
+
+@dp.message(F.text == "👺 Гринч (Ивент)")
+async def grinch_event(message: types.Message):
+    # (Тут код проверки кулдауна, такой же как в scarecrow_menu)
+    # Только картинка Гринча и текст другой:
+    
+    caption = (
+        "👺 <b>Гринч крадёт Рождество!</b>\n"
+        "Этот зеленый злодей пытается утащить твои помидоры!\n"
+        "Закидай его снежками, чтобы отогнать!"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❄️ КИНУТЬ СНЕЖОК", callback_data="throw_snowball")]
+    ])
+    # Отправляем фото гринча...
+    await message.answer(caption, reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data == "throw_snowball")
+async def snowball_handler(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    now = time.time()
+    
+    # 1. Проверка кулдауна (как и раньше)
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT last_scarecrow FROM users WHERE user_id = ?', (user_id,)) as c:
+            last = (await c.fetchone())[0]
+            
+    if now - last < SCARECROW_COOLDOWN:
+        await cb.answer("⏳ Гринч еще не вернулся!", show_alert=True)
+        return
+
+    # 2. Логика награды (считаем сразу, показываем в конце)
+    reward_mandarins = random.randint(15, 30)
+    
+    # Бусты
+    boosts = ["milk_x2", "tomato_x2", "water_free", "luck_max"]
+    chosen_boost = random.choices(boosts, weights=[40, 30, 20, 10], k=1)[0]
+    boost_names = {
+        "milk_x2": "🥛 Молочный поток", "tomato_x2": "🍅 Гига-Томат",
+        "water_free": "🌊 Дождь", "luck_max": "🍀 Клевер"
+    }
+    
+    # Запись в БД
+    end_time = now + BOOST_DURATION
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Начисляем мандарины
+        await db.execute('UPDATE users SET mandarins = mandarins + ? WHERE user_id = ?', (reward_mandarins, user_id))
+        # Обновляем таймеры ивента
+        await db.execute(
+            'UPDATE users SET last_scarecrow = ?, active_boost = ?, boost_end = ? WHERE user_id = ?', 
+            (now, chosen_boost, end_time, user_id)
+        )
+        await db.commit()
+
+    # --- ЗАПУСК АНИМАЦИИ ---
+    
+    # Чтобы анимация была плавной, используем try-except для локальных файлов
+    # Если файла нет, берем ссылку URL
+    
+    # КАДР 1: Замах
+    try:
+        media1 = InputMediaPhoto(media=FSInputFile(GRINCH_FRAMES[0]), caption="🗻 <b>Гринч наблюдает..</b>", parse_mode="HTML")
+    except:
+        media1 = InputMediaPhoto(media=GRINCH_URLS[0], caption="🗻 <b>Гринч наблюдает..</b>", parse_mode="HTML")
+    
+    await cb.message.edit_media(media=media1)
+    await asyncio.sleep(1.0) # Ждем 1 секунду
+    
+    # КАДР 2: Удар
+    try:
+        media2 = InputMediaPhoto(media=FSInputFile(GRINCH_FRAMES[1]), caption="❄ <b>Замах... Летит!</b>", parse_mode="HTML")
+    except:
+        media2 = InputMediaPhoto(media=GRINCH_URLS[1], caption="❄ <b>Замах... Летит!</b>", parse_mode="HTML")
+        
+    await cb.message.edit_media(media=media2)
+    await asyncio.sleep(1.0) # Ждем 1 секунду
+
+    # КАДР 3: Удар
+    try:
+        media3 = InputMediaPhoto(media=FSInputFile(GRINCH_FRAMES[1]), caption="💥 <b>БАМ! Прямо в лицо!</b>", parse_mode="HTML")
+    except:
+        media3 = InputMediaPhoto(media=GRINCH_URLS[1], caption="💥 <b>БАМ! Прямо в лицо!</b>", parse_mode="HTML")
+        
+    await cb.message.edit_media(media=media3)
+    await asyncio.sleep(1.0) # Ждем 1 секунду
+
+    # КАДР 3: Финал (Побег + Награды)
+    final_caption = (
+        f"👺 <b>Гринч повержен!</b>\n"
+        f"Злодей убежал в горы, роняя подарки.\n\n"
+        f"🍊 <b>Награда:</b> +{reward_mandarins} мандаринов\n"
+        f"⚡️ <b>Активирован буст:</b> {boost_names[chosen_boost]} (30 мин)"
+    )
+    
+    try:
+        media3 = InputMediaPhoto(media=FSInputFile(GRINCH_FRAMES[2]), caption=final_caption, parse_mode="HTML")
+    except:
+        media3 = InputMediaPhoto(media=GRINCH_URLS[2], caption=final_caption, parse_mode="HTML")
+
+    await cb.message.edit_media(media=media3)
+    await cb.answer()
+
+@dp.message(F.text == "🎅 Лавка Санты")
+async def santa_shop(message: types.Message):
+    # Получаем мандарины (предположим, колонка mandarins)
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT mandarins FROM users WHERE user_id = ?', (message.from_user.id,)) as c:
+            mandarins = (await c.fetchone())[0]
+
+    text = (
+        f"🎅 <b>Хо-хо-хо! Добро пожаловать!</b>\n"
+        f"У тебя есть: <b>{mandarins} 🍊</b>\n\n"
+        f"Что хочешь купить?"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Большой Подарок (50 🍊)", callback_data="buy_gift_box")],
+        [InlineKeyboardButton(text="🧪 Ящик Химии (30 🍊)", callback_data="buy_fert_box")],
+        [InlineKeyboardButton(text="💰 Обменять на помидоры (10 🍊 = 500🍅)", callback_data="ex_mand_tom")]
+    ])
+    
+    # Картинка Санты (найди в инете santa.jpg)
+    # await message.answer_photo(FSInputFile("santa.jpg"), caption=text, reply_markup=kb, parse_mode="HTML")
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# Хендлер покупки подарка
+@dp.callback_query(F.data == "buy_gift_box")
+async def buy_gift(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT mandarins, tomatoes, milk, fertilizer FROM users WHERE user_id = ?', (user_id,)) as c:
+            u = await c.fetchone()
+            
+    if u[0] >= 50:
+        # Списываем
+        await update_stat(user_id, "mandarins", u[0] - 50)
+        
+        # Рандомный приз
+        prize_roll = random.random()
+        if prize_roll < 0.5:
+            prize = 5000
+            await update_stat(user_id, "tomatoes", u[1] + prize)
+            res = f"🍅 {prize} помидоров!"
+        elif prize_roll < 0.8:
+            prize = 3000
+            await update_stat(user_id, "milk", u[2] + prize)
+            res = f"🥛 {prize} л. молока!"
+        else:
+            prize = 10
+            await update_stat(user_id, "fertilizer", u[3] + prize)
+            res = f"🧪 {prize} шт. химии!"
+            
+        await cb.message.edit_text(f"🎁 <b>Ты открыл подарок!</b>\nВнутри: <b>{res}</b>", parse_mode="HTML")
+    else:
+        await cb.answer("❌ Не хватает мандаринов!", show_alert=True)
+
+# --- НАВИГАЦИЯ ПО МЕНЮ ---
+
+@dp.message(F.text == "🏰 Город")
+async def nav_town(message: types.Message):
+    await message.answer("🏙 Вы пришли на городскую площадь.", reply_markup=town_keyboard())
+
+@dp.message(F.text == "🎴 Карточки")
+async def show_cards(message: types.Message):
+    user_id = message.from_user.id
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count > 0', (user_id,)) as c:
+            my_cards = await c.fetchall()
+
+    if not my_cards:
+        await message.answer("🎒 Твой альбом с карточками пуст.")
+        return
+
+    text = "🎒 <b>ТВОЯ КОЛЛЕКЦИЯ:</b>\n\n"
+    kb_builder = []
+    
+    for card_id, count in my_cards:
+        if card_id not in CARDS: continue # Защита от удаленных карт
+        
+        card_data = CARDS[card_id]
+        rarity = RARITY_INFO[card_data["rarity"]]
+        
+        text += f"{rarity['icon']} <b>{card_data['name']}</b> — {count} шт.\n"
+        
+        # Кнопка "Продать [Название]"
+        kb_builder.append([InlineKeyboardButton(text=f"💰 Продать: {card_data['name']}", callback_data=f"sell_init_{card_id}")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_builder)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+@dp.message(F.text == "🎡 Развлечения")
+async def nav_fun(message: types.Message):
+    await message.answer("🎪 Добро пожаловать в парк развлечений!", reply_markup=fun_keyboard())
+
+@dp.message(F.text == "🔙 Назад")
+async def nav_back(message: types.Message):
+    await message.answer("🏡 Вы вернулись на ферму.", reply_markup=main_keyboard())
+
+# --- АДМИН ПАНЕЛЬ (GUI) ---
+
+# 1. Главное меню админки
+@dp.message(Command("admin"))
+async def admin_panel_start(message: types.Message, state: FSMContext):
+    if message.from_user.username.lower() not in ADMINS:
+        return # Игнорим не админов
+
+    await state.clear() # Сбрасываем прошлые состояния
+    
+    text = "🕵️‍♂️ <b>Панель Администратора</b>\nВыбери категорию действий:"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Ресурсы (Выдать/Забрать)", callback_data="admin_cat_eco")],
+        [InlineKeyboardButton(text="👤 Игроки (Бан/Префикс)", callback_data="admin_cat_users")],
+        [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")]
+    ])
+    
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# 2. Категория: Экономика
+@dp.callback_query(F.data == "admin_cat_eco")
+async def admin_eco_menu(cb: CallbackQuery):
+    text = "💰 <b>Управление Экономикой</b>\nЧто меняем?"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🍅 Помидоры", callback_data="adm_res_tomatoes"),
+         InlineKeyboardButton(text="🥛 Молоко", callback_data="adm_res_milk")],
+        [InlineKeyboardButton(text="🍊 Мандарины", callback_data="adm_res_mandarins"),
+         InlineKeyboardButton(text="🧪 Химия", callback_data="adm_res_fertilizer")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back_main")]
+    ])
+    await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+# 3. Категория: Игроки
+@dp.callback_query(F.data == "admin_cat_users")
+async def admin_users_menu(cb: CallbackQuery):
+    text = "👤 <b>Управление Игроками</b>\nВыбери действие:"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚫 БАН / РАЗБАН", callback_data="adm_act_ban")],
+        [InlineKeyboardButton(text="🏷 Установить ПРЕФИКС", callback_data="adm_act_prefix")],
+        [InlineKeyboardButton(text="🔰 Установить СТАТУС", callback_data="adm_act_status")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back_main")]
+    ])
+    await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+# 4. Обработка кнопки "Назад" и "Закрыть"
+@dp.callback_query(F.data == "admin_back_main")
+async def admin_back(cb: CallbackQuery):
+    await admin_panel_start(cb.message, None) # Перезапуск меню (нужен костыль для state, но тут пофиг)
+    await cb.answer()
+
+@dp.callback_query(F.data == "admin_close")
+async def admin_close(cb: CallbackQuery):
+    await cb.message.delete()
+
+# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 1: Выбор ресурса/действия) ---
+
+# Если выбрали ресурс (Помидоры/Молоко...)
+@dp.callback_query(F.data.startswith("adm_res_"))
+async def admin_select_resource(cb: CallbackQuery, state: FSMContext):
+    resource = cb.data.split("_")[2] # tomatoes, milk...
+    
+    # Сохраняем ресурс, теперь спрашиваем ТИП операции
+    await state.update_data(target_resource=resource)
+    
+    text = f"⚙️ Работаем с: <b>{resource.upper()}</b>\nВыбери операцию:"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ ВЫДАТЬ (Add)", callback_data="adm_op_add"),
+         InlineKeyboardButton(text="➖ ЗАБРАТЬ (Remove)", callback_data="adm_op_remove")],
+        [InlineKeyboardButton(text="✏️ УСТАНОВИТЬ (Set)", callback_data="adm_op_set")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_cat_eco")]
+    ])
+    await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+# Если выбрали действие с игроком (Бан/Префикс...)
+@dp.callback_query(F.data.startswith("adm_act_"))
+async def admin_select_user_action(cb: CallbackQuery, state: FSMContext):
+    action = cb.data.split("_")[2] # ban, prefix, status
+    await state.update_data(target_action=action)
+    
+    # Сразу просим ID
+    await cb.message.edit_text("✍️ <b>Введи ID игрока:</b>\n(Можно взять из профиля игрока)", parse_mode="HTML")
+    await state.set_state(AdminPanelStates.waiting_for_user_id)
+
+# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 2: Выбор операции для ресурсов) ---
+@dp.callback_query(F.data.startswith("adm_op_"))
+async def admin_select_operation(cb: CallbackQuery, state: FSMContext):
+    operation = cb.data.split("_")[2] # add, remove, set
+    await state.update_data(target_operation=operation)
+    
+    await cb.message.edit_text("✍️ <b>Введи ID игрока:</b>", parse_mode="HTML")
+    await state.set_state(AdminPanelStates.waiting_for_user_id)
+
+# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 3: Получение ID) ---
+@dp.message(StateFilter(AdminPanelStates.waiting_for_user_id))
+async def admin_get_id(message: types.Message, state: FSMContext):
+    try:
+        user_id = int(message.text)
+    except:
+        await message.answer("❌ ID должен быть числом. Попробуй еще раз.")
+        return
+
+    # Проверяем, есть ли такой юзер
+    user = await get_user(user_id)
+    if not user:
+        await message.answer("❌ Игрок не найден в базе.")
+        return
+
+    await state.update_data(target_user_id=user_id)
+    
+    # Смотрим, что мы делали. Если это БАН - значение не нужно (или нужно 1/0)
+    data = await state.get_data()
+    
+    if "target_action" in data and data["target_action"] == "ban":
+        # Меню бана
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔨 ЗАБАНИТЬ", callback_data="adm_ban_do_1"),
+             InlineKeyboardButton(text="😇 РАЗБАНИТЬ", callback_data="adm_ban_do_0")]
+        ])
+        await message.answer(f"Игрок: {user[1]} (ID: {user_id})\nЧто делаем?", reply_markup=kb)
+        await state.clear() # Сбрасываем стейт, так как дальше кнопки
+        return
+
+    # Для остальных действий просим ЗНАЧЕНИЕ
+    await message.answer("✍️ <b>Введите значение:</b>\n(Количество ресурсов, текст префикса или статус)", parse_mode="HTML")
+    await state.set_state(AdminPanelStates.waiting_for_value)
+
+# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 4: Исполнение БАНА) ---
+@dp.callback_query(F.data.startswith("adm_ban_do_"))
+async def admin_exec_ban(cb: CallbackQuery):
+    val = int(cb.data.split("_")[3]) # 1 или 0
+    # Нам нужен ID из контекста, но мы сбросили стейт. 
+    # Это проблема архитектуры. Упростим: перенесем ID в текст сообщения или запросим заново.
+    # ЛУЧШЕЕ РЕШЕНИЕ: При нажатии кнопки бана, передать ID в callback_data, но он может быть длинным.
+    # Давай сделаем проще: Бан через команду /ban ID в консоли, а тут просто в value напишем 1 или 0.
+    # Но раз мы уже тут: вернемся в стейт value.
+    await cb.answer("Эта функция пока только через ввод 1 (бан) или 0 (разбан) в следующем шаге.")
+
+# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 4: Получение ЗНАЧЕНИЯ и Исполнение) ---
+@dp.message(StateFilter(AdminPanelStates.waiting_for_value))
+async def admin_exec_final(message: types.Message, state: FSMContext):
+    value_raw = message.text
+    data = await state.get_data()
+    
+    target_id = data['target_user_id']
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        
+        # === ВЕТКА: РЕСУРСЫ ===
+        if "target_resource" in data:
+            res = data["target_resource"] # tomatoes, milk...
+            op = data["target_operation"] # add, remove, set
+            
+            try:
+                amount = int(value_raw)
+            except:
+                await message.answer("❌ Для ресурсов нужно ввести ЧИСЛО.")
+                return
+
+            # Получаем текущее
+            async with db.execute(f'SELECT {res} FROM users WHERE user_id = ?', (target_id,)) as c:
+                current = (await c.fetchone())[0]
+
+            new_val = current
+            if op == "add": new_val += amount
+            elif op == "remove": new_val -= amount
+            elif op == "set": new_val = amount
+            
+            # Защита от минуса
+            if new_val < 0: new_val = 0
+            
+            await db.execute(f'UPDATE users SET {res} = ? WHERE user_id = ?', (new_val, target_id))
+            await db.commit()
+            
+            await message.answer(f"✅ Успешно! {res.upper()} игрока {target_id} изменены.\nБыло: {current} -> Стало: {new_val}")
+
+        # === ВЕТКА: ИГРОКИ (Префикс, Статус, Бан) ===
+        elif "target_action" in data:
+            act = data["target_action"]
+            
+            if act == "prefix":
+                # Если ввели "-", удаляем префикс
+                val = None if value_raw == "-" else value_raw
+                await db.execute('UPDATE users SET prefix = ? WHERE user_id = ?', (val, target_id))
+                await message.answer(f"✅ Префикс игрока изменен на: {val}")
+                
+            elif act == "status":
+                await db.execute('UPDATE users SET custom_status = ? WHERE user_id = ?', (value_raw, target_id))
+                await message.answer(f"✅ Статус игрока изменен на: {value_raw}")
+            
+            elif act == "ban":
+                try:
+                    is_ban = int(value_raw) # Ожидаем 1 или 0
+                    await db.execute('UPDATE users SET is_banned = ? WHERE user_id = ?', (is_ban, target_id))
+                    status = "ЗАБАНЕН 🚫" if is_ban else "РАЗБАНЕН 😇"
+                    await message.answer(f"✅ Игрок {status}")
+                except:
+                    await message.answer("❌ Для бана введи 1, для разбана 0.")
+
+        await db.commit()
+    
+    await state.clear()
+
+# --- АДМИН-КОНСОЛЬ ---
+async def admin_console_loop(bot: Bot):
+    print(f"{Fore.YELLOW}🖥 SUPER-CONSOLE v2.0 запущена!{Style.RESET_ALL}")
+    print("Команды: list, search, delete, setadmin, stats, give, bc, info")
+    
+    while True:
+        try:
+            command_raw = await aioconsole.ainput(f"{Fore.BLUE}admin@{bot.token.split(':')[0]}~# {Style.RESET_ALL}")
+            parts = command_raw.split()
+            if not parts: continue
+            cmd = parts[0].lower()
+
+            # === LIST: Список игроков ===
+            if cmd == "list":
+                async with aiosqlite.connect(DB_NAME) as db:
+                    # Берем последние 50 для скорости
+                    async with db.execute('SELECT user_id, username, tomatoes FROM users ORDER BY user_id DESC LIMIT 50') as c:
+                        users = await c.fetchall()
+                
+                print(f"{Fore.CYAN}--- СПИСОК ИГРОКОВ (Последние 50) ---{Style.RESET_ALL}")
+                print(f"{'ID':<12} | {'Username':<20} | {'Баланс':<10}")
+                print("-" * 50)
+                for u in users:
+                    name = u[1] if u[1] else "NoName"
+                    print(f"{u[0]:<12} | {name:<20} | {u[2]:<10}")
+                print("-" * 50)
+
+            # === SET: Универсальное изменение статов ===
+            elif cmd == "set":
+                # Формат: set <username> <field> <value>
+                if len(parts) < 4:
+                    print(f"{Fore.YELLOW}📝 Использование: set <username> <параметр> <значение>{Style.RESET_ALL}")
+                    print(f"Доступные параметры: milk, tomatoes, fertilizer, mandarins, click_level, tomato_level, luck_level, is_banned, reg_date")
+                    continue
+                
+                target_name = parts[1]
+                field = parts[2].lower()
+                value_raw = parts[3]
+
+                # Список разрешенных полей (чтобы случайно не сломать ID или что-то системное)
+                allowed_fields = [
+                    "milk", "tomatoes", "fertilizer", "mandarins", 
+                    "click_level", "tomato_level", "luck_level", "safety_level", 
+                    "eco_level", "casino_level", "gmo_level", 
+                    "sosi_count", "is_banned", "reg_date", "is_admin", "prefix", "custom_status"
+                ]
+
+                if field not in allowed_fields:
+                    print(f"{Fore.RED}❌ Ошибка: Параметр '{field}' нельзя изменить или он не существует.{Style.RESET_ALL}")
+                    print(f"Разрешено: {', '.join(allowed_fields)}")
+                    continue
+
+                async with aiosqlite.connect(DB_NAME) as db:
+                    # 1. Ищем игрока по нику
+                    async with db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_name,)) as c:
+                        user = await c.fetchone()
+                    
+                    if not user:
+                        print(f"{Fore.RED}❌ Игрок '{target_name}' не найден.{Style.RESET_ALL}")
+                        continue
+                    
+                    target_id = user[0]
+
+                    # 2. Обрабатываем значение
+                    # Если меняем reg_date (время в игре), можно ввести кол-во часов, и мы отнимем их от текущего времени
+                    if field == "reg_date":
+                        try:
+                            # Если ввели "0", сбрасываем на "сейчас"
+                            if value_raw == "0":
+                                final_value = time.time()
+                                print(f"🕒 Время регистрации сброшено на СЕЙЧАС.")
+                            else:
+                                # Если ввели часы (например, 100), делаем вид, что рега была 100 часов назад
+                                hours = float(value_raw)
+                                final_value = time.time() - (hours * 3600)
+                                print(f"🕒 Установлен стаж: {hours} часов.")
+                        except:
+                            print("❌ Для времени введите количество часов (число).")
+                            continue
+                    
+                    # Если меняем текстовые поля (префикс, статус)
+                    elif field in ["prefix", "custom_status"]:
+                        # Если в значении пробелы, нужно склеить обратно parts[3:]
+                        final_value = " ".join(parts[3:])
+                        if final_value == "-": final_value = None # Удаление
+                    
+                    # Для всех числовых полей
+                    else:
+                        try:
+                            final_value = int(value_raw)
+                        except ValueError:
+                            print(f"{Fore.RED}❌ Значение для '{field}' должно быть числом!{Style.RESET_ALL}")
+                            continue
+
+                    # 3. Применяем изменения
+                    try:
+                        await db.execute(f'UPDATE users SET {field} = ? WHERE user_id = ?', (final_value, target_id))
+                        await db.commit()
+                        print(f"{Fore.GREEN}✅ Успешно! Игрок: {target_name} | {field} -> {final_value}{Style.RESET_ALL}")
+                        
+                        # Уведомляем игрока (по желанию, можно закомментировать)
+                        try:
+                            msg = f"✏️ <b>Админ изменил ваши данные:</b>\n{field} = {final_value}"
+                            if field == "is_banned" and final_value == 1: msg = "🚫 <b>ВЫ ЗАБАНЕНЫ АДМИНИСТРАТОРОМ!</b>"
+                            if field == "is_banned" and final_value == 0: msg = "😇 <b>ВАС РАЗБАНИЛИ!</b>"
+                            await bot.send_message(target_id, msg, parse_mode="HTML")
+                        except: pass
+                        
+                    except Exception as e:
+                        print(f"{Fore.RED}💥 Ошибка БД: {e}{Style.RESET_ALL}")
+
+            # === SEARCH: Поиск игрока ===
+            elif cmd == "search":
+                if len(parts) < 2:
+                    print("❌ Использование: search <часть_ника>")
+                    continue
+                
+                query = parts[1]
+                async with aiosqlite.connect(DB_NAME) as db:
+                    async with db.execute('SELECT * FROM users WHERE username LIKE ?', (f'%{query}%',)) as c:
+                        rows = await c.fetchall()
+                
+                if not rows:
+                    print("❌ Игроки не найдены.")
+                else:
+                    for u in rows:
+                        # u[0]=id, u[1]=name, u[2]=milk, u[3]=tom, ... u[14]=is_admin (если по порядку)
+                        print(f"\n🔎 {Fore.GREEN}НАЙДЕН ИГРОК:{Style.RESET_ALL}")
+                        print(f"🆔 ID: {u[0]}")
+                        print(f"👤 Nick: {u[1]}")
+                        print(f"🍅 Помидоры: {format_num(u[3])}")
+                        print(f"🥛 Молоко: {format_num(u[2])}")
+                        print(f"📅 Рег: {time.ctime(u[16] if len(u) > 16 else 0)}") # Индекс может отличаться
+                        print(f"👮 Админ: {'ДА' if u[-2] == 1 else 'НЕТ'}") # is_admin предпоследний
+
+            # === DELETE: Удаление (с защитой) ===
+            elif cmd == "delete":
+                if len(parts) < 2:
+                    print("❌ Использование: delete <username>")
+                    continue
+                
+                target_name = parts[1]
+                async with aiosqlite.connect(DB_NAME) as db:
+                    # Ищем ID
+                    async with db.execute('SELECT user_id, username, tomatoes FROM users WHERE username = ?', (target_name,)) as c:
+                        target = await c.fetchone()
+                    
+                    if not target:
+                        print("❌ Игрок с таким юзернеймом не найден (вводите точный username без @).")
+                        continue
+                    
+                    t_id, t_name, t_balance = target
+                    
+                    # ЭТАП 1: Предупреждение
+                    print(f"{Fore.RED}⚠️ ВНИМАНИЕ! Вы собираетесь удалить игрока:{Style.RESET_ALL}")
+                    print(f"ID: {t_id} | Name: {t_name} | Bal: {t_balance}")
+                    print("Это действие НЕОБРАТИМО. Все ресурсы и карты будут стерты.")
+                    
+                    confirm1 = await aioconsole.ainput(f"Для продолжения введите {Fore.RED}DELETE{Style.RESET_ALL}: ")
+                    
+                    if confirm1 != "DELETE":
+                        print("🚫 Отмена удаления.")
+                        continue
+                        
+                    # ЭТАП 2: Финальное подтверждение
+                    confirm2 = await aioconsole.ainput(f"Введите {Fore.RED}CONFIRM{Style.RESET_ALL} для окончательного удаления: ")
+                    
+                    if confirm2 == "CONFIRM":
+                        await db.execute('DELETE FROM users WHERE user_id = ?', (t_id,))
+                        await db.execute('DELETE FROM user_cards WHERE user_id = ?', (t_id,))
+                        await db.execute('DELETE FROM market WHERE seller_id = ?', (t_id,))
+                        await db.commit()
+                        print(f"{Fore.GREEN}✅ Аккаунт {t_name} успешно уничтожен.{Style.RESET_ALL}")
+                    else:
+                        print("🚫 Отмена.")
+
+            # === SETADMIN: Выдать админку ===
+            elif cmd == "setadmin":
+                if len(parts) < 3:
+                    print("❌ Использование: setadmin <username> <1 или 0>")
+                    continue
+                
+                target_name = parts[1]
+                try:
+                    val = int(parts[2]) # 1 или 0
+                except:
+                    print("❌ Значение должно быть 1 (дать) или 0 (снять).")
+                    continue
+
+                async with aiosqlite.connect(DB_NAME) as db:
+                    # Ищем по юзернейму
+                    async with db.execute('SELECT user_id FROM users WHERE username = ?', (target_name,)) as c:
+                        res = await c.fetchone()
+                    
+                    if not res:
+                        print("❌ Игрок не найден.")
+                        continue
+                    
+                    uid = res[0]
+                    await db.execute('UPDATE users SET is_admin = ? WHERE user_id = ?', (val, uid))
+                    await db.commit()
+                
+                # Обновляем список в памяти
+                if val == 1:
+                    if target_name.lower() not in ADMINS: ADMINS.append(target_name.lower())
+                    print(f"{Fore.GREEN}✅ Пользователь {target_name} теперь АДМИН!{Style.RESET_ALL}")
+                    try: await bot.send_message(uid, "😎 <b>Вам выданы права Администратора!</b>")
+                    except: pass
+                else:
+                    if target_name.lower() in ADMINS: ADMINS.remove(target_name.lower())
+                    print(f"{Fore.YELLOW}🔸 С пользователя {target_name} сняты права админа.{Style.RESET_ALL}")
+
+            # === STATS: Статистика бота ===
+            elif cmd == "stats":
+                async with aiosqlite.connect(DB_NAME) as db:
+                    # Общее кол-во
+                    async with db.execute('SELECT COUNT(*) FROM users') as c:
+                        total_users = (await c.fetchone())[0]
+                    # Общая экономика
+                    async with db.execute('SELECT SUM(tomatoes), SUM(milk) FROM users') as c:
+                        row = await c.fetchone()
+                        total_tom = row[0] if row[0] else 0
+                        total_milk = row[1] if row[1] else 0
+                    
+                    # Трафик (активные за 24 часа)
+                    day_ago = time.time() - 86400
+                    async with db.execute('SELECT COUNT(*) FROM users WHERE last_active > ?', (day_ago,)) as c:
+                        active_24h = (await c.fetchone())[0]
+                    
+                    # Новые за 24 часа
+                    async with db.execute('SELECT COUNT(*) FROM users WHERE reg_date > ?', (day_ago,)) as c:
+                        new_24h = (await c.fetchone())[0]
+
+                print(f"\n📊 {Fore.MAGENTA}СТАТИСТИКА ПРОЕКТА:{Style.RESET_ALL}")
+                print(f"👥 Всего игроков: {Fore.CYAN}{total_users}{Style.RESET_ALL}")
+                print(f"🔥 Актив (24ч): {Fore.GREEN}{active_24h}{Style.RESET_ALL} (Новых: {new_24h})")
+                print(f"💰 Экономика:")
+                print(f"   🍅 Всего помидоров: {format_num(total_tom)}")
+                print(f"   🥛 Всего молока: {format_num(total_milk)}")
+                avg = int(total_tom / total_users) if total_users > 0 else 0
+                print(f"   📈 Средний баланс: {format_num(avg)} 🍅")
+
+            # === Старые команды (оставляем для совместимости) ===
+            elif cmd == "give":
+                # ... (ваш старый код give)
+                try:
+                    target_id = int(parts[1])
+                    amount = int(parts[2])
+                    await update_stat(target_id, "tomatoes", (await get_user(target_id))[3] + amount)
+                    print(f"✅ Выдано {amount} 🍅 ID: {target_id}")
+                except: print("Ошибка give")
+
+            elif cmd == "bc": # Broadcast
+                text = " ".join(parts[1:])
+                print("🚀 Рассылка...")
+                async with aiosqlite.connect(DB_NAME) as db:
+                    async with db.execute('SELECT user_id FROM users') as c:
+                        users = await c.fetchall()
+                count = 0
+                for r in users:
+                    try:
+                        await bot.send_message(r[0], f"🔔 {text}", parse_mode="HTML")
+                        count += 1
+                        await asyncio.sleep(0.05)
+                    except: pass
+                print(f"✅ Доставлено: {count}")
+
+            else:
+                print("❓ Неизвестная команда. Доступны: list, search, delete, setadmin, stats, give, bc")
+
+        except Exception as e:
+            print(f"{Fore.RED}💥 Ошибка консоли: {e}{Style.RESET_ALL}")
+
+# --- ЗАПУСК ---
+async def main():
+    await init_db() # Тут пройдут миграции
+    
+    # --- ЗАГРУЗКА АДМИНОВ ИЗ БД ---
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT username FROM users WHERE is_admin = 1') as c:
+            db_admins = await c.fetchall()
+            for row in db_admins:
+                if row[0] and row[0].lower() not in ADMINS:
+                    ADMINS.append(row[0].lower())
+    print(f"👮‍♂️ Загружено админов: {len(ADMINS)}")
+    # ------------------------------
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    await set_menu(bot)
+    # Отключаем лишний мусор в логах, чтобы консоль была чистой
+    logging.basicConfig(level=logging.ERROR)
+    
+    print(f"{Fore.GREEN}✅ Бот 🎄 Новогоднее Обновление: Операция Оливье запущен!{Style.RESET_ALL}")
+    
+    # Запускаем бота и консоль параллельно
+    await asyncio.gather(
+        dp.start_polling(bot),
+        admin_console_loop(bot)
+    )
+
+if __name__ == "__main__":
+    asyncio.run(main())
