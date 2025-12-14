@@ -1,3 +1,6 @@
+# ==========================================
+# 1. ИМПОРТЫ И БИБЛИОТЕКИ
+# ==========================================
 import json
 import os
 import asyncio
@@ -5,75 +8,83 @@ import logging
 import random
 import time
 import math
-import aiosqlite
 import sys
-from colorama import init, Fore, Style
+import aiosqlite
 import aioconsole
+from colorama import init, Fore, Style
 
 from aiogram import Bot, Dispatcher, F, types, BaseMiddleware
 from aiogram.filters import Command, StateFilter
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, 
     InlineKeyboardMarkup, InlineKeyboardButton,
-    CallbackQuery, Message, BotCommand, FSInputFile,
+    CallbackQuery, Message, FSInputFile,
     InputMediaPhoto, ReplyKeyboardRemove 
 )
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+# Инициализация цвета в консоли
+init(autoreset=True)
+
 # ==========================================
-# 1. КОНФИГУРАЦИЯ И НАСТРОЙКИ
+# 2. КОНФИГУРАЦИЯ И НАСТРОЙКИ
 # ==========================================
 
-init(autoreset=True)
+# --- Основные настройки ---
 TOKEN = '8482572401:AAHR91Uwrq6U2-ody9jYUmQxme3xOeyzyvg'
 REQUIRED_CHANNEL_ID = "@molokofarmoff" 
 REQUIRED_CHANNEL_URL = "https://t.me/molokofarmoff"
 DB_NAME = 'farm_v4.db'
 CARDS_DIR = "img_cards"
+ADMINS = ['silentglove', 'octoberchaos']
 
+# Проверка папки карт
 if not os.path.exists(CARDS_DIR):
     os.makedirs(CARDS_DIR)
 
-ADMINS = ['silentglove', 'octoberchaos']
-
-# Глобальные флаги
+# --- Глобальные флаги ---
 CONSOLE_LOGS = False      
 MAINTENANCE_MODE = False  
 
-# Игровые константы
+# --- Баланс и Экономика ---
+MILK_PER_CLICK = 1
+BASE_PLANT_COST = 5
+BASE_CASINO_COST = 10
+FERT_EFFECT = 5
+DAILY_COOLDOWN = 86400 
+JACKPOT_CHANCE = 100000 
+SCARECROW_COOLDOWN = 10800  
+BOOST_DURATION = 600        
+
+# --- Академия (Цены и статы) ---
 ACAD_BASE_INCOME = 100       
 ACAD_INCOME_MULT = 50        
 ACAD_BASE_TIME = 6           
 ACAD_TIME_BONUS = 1          
 ACAD_DISCOUNT_PER_LVL = 0.02 
-
 COST_MANAGEMENT = 1000
 COST_LOGISTICS = 2500
 COST_AGRONOMY = 5000
 
-MILK_PER_CLICK = 1
-BASE_PLANT_COST = 5
-BASE_CASINO_COST = 10
-FERT_EFFECT = 5
-
-DAILY_COOLDOWN = 86400 
-JACKPOT_CHANCE = 100000 
-
-SCARECROW_COOLDOWN = 10800  
-BOOST_DURATION = 600        
-
-# Крафт и BP
-XP_PER_ACTION = 10       
-XP_PER_LEVEL_BASE = 500  
-MAX_BP_LEVEL = 50        
-
+# --- Лаборатория и Крафт ---
 MUTAGEN_SHOP_PRICE = 5000 
 CRAFT_COST_MUTAGEN = 1    
 CRAFT_CARDS_NEEDED = 3    
 
-# Медиа
+# --- Battle Pass (Сезон) ---
+XP_PER_ACTION = 10       
+XP_PER_LEVEL_BASE = 500  
+MAX_BP_LEVEL = 50        
+
+BP_REWARDS = {
+    1: ("tomatoes", 1000), 2: ("milk", 500), 3: ("fertilizer", 1), 5: ("mutagen", 1),
+    10: ("tomatoes", 10000), 15: ("mutagen", 3), 20: ("fertilizer", 10), 
+    25: ("tomatoes", 50000), 50: ("mutagen", 10)
+}
+
+# --- Медиа (Пути и Ссылки) ---
 CHEST_CLOSE_PATH = "closed_chest.png" 
 CHEST_OPEN_PATH = "open_chest.png"
 URL_CHEST_CLOSE = "https://i.ibb.co/vzDqHqN/chest-closed.jpg"
@@ -85,7 +96,7 @@ URL_SCARECROW_GOOD = "https://i.ibb.co/9V40K5z/scarecrow-good.jpg"
 LOGO_PATH = "logo new year.png"
 DEFAULT_LOGO_URL = "https://storage.googleapis.com/pod_public/1300/243765.jpg"
 
-# Дизайн
+# --- Дизайн (Стили) ---
 UI_SEP = "━━━━━━━━━━━━━━━"
 UI_BULLET = "▪️"
 UI_SUB_BULLET = "▫️"
@@ -97,11 +108,7 @@ RARITY_INFO = {
     "limited": {"name": "Limited", "icon": "💠", "color_code": 0xFFD700}
 }
 
-BP_REWARDS = {
-    1: ("tomatoes", 1000), 2: ("milk", 500), 3: ("fertilizer", 1), 5: ("mutagen", 1),
-    10: ("tomatoes", 10000), 15: ("mutagen", 3), 20: ("fertilizer", 10), 25: ("tomatoes", 50000), 50: ("mutagen", 10)
-}
-
+# --- Загрузка карт ---
 def load_cards():
     try:
         with open("cards.json", "r", encoding="utf-8") as f:
@@ -111,39 +118,42 @@ def load_cards():
 CARDS = load_cards()
 
 # ==========================================
-# 2. СОСТОЯНИЯ (FSM)
+# 3. СОСТОЯНИЯ (FSM)
 # ==========================================
 
+# Админка: Ресурсы
 class AdminEcoStates(StatesGroup):
     waiting_for_user_id = State()
     waiting_for_amount = State()
 
+# Админка: Карточки
 class AdminCardStates(StatesGroup):
     waiting_for_card_id = State()
     waiting_for_target = State()
-    
-class AdminPanelStates(StatesGroup): 
-    waiting_for_user_id = State()
-    waiting_for_value = State()
 
+# Рынок
 class MarketStates(StatesGroup):
     waiting_for_price = State()
     card_id_to_sell = State()
 
+# Рассылка
 class BroadcastStates(StatesGroup):
     waiting_for_broadcast_text = State() 
     waiting_for_broadcast_confirm = State()    
 
+# Промокоды
 class GameStates(StatesGroup):
     waiting_for_code = State()
 
 # ==========================================
-# 3. БАЗА ДАННЫХ И ХЕЛПЕРЫ
+# 4. БАЗА ДАННЫХ И МИГРАЦИИ
 # ==========================================
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
+        
+        # Основная таблица пользователей
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY, username TEXT, milk INTEGER DEFAULT 0, tomatoes INTEGER DEFAULT 0,
@@ -161,13 +171,15 @@ async def init_db():
                 bp_level INTEGER DEFAULT 1, bp_xp INTEGER DEFAULT 0, bp_claimed TEXT DEFAULT ''
             )
         ''')
+        
+        # Остальные таблицы
         await db.execute('CREATE TABLE IF NOT EXISTS user_cards (user_id INTEGER, card_id TEXT, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, card_id))')
         await db.execute('CREATE TABLE IF NOT EXISTS promo_codes (code TEXT PRIMARY KEY, uses_left INTEGER, reward_type TEXT, reward_amount INTEGER)')
         await db.execute('CREATE TABLE IF NOT EXISTS used_codes (user_id INTEGER, code TEXT, PRIMARY KEY (user_id, code))')
         await db.execute('CREATE TABLE IF NOT EXISTS market (lot_id INTEGER PRIMARY KEY AUTOINCREMENT, seller_id INTEGER, seller_name TEXT, card_id TEXT, price INTEGER)')
         await db.commit()
         
-        # Миграции
+        # Миграции (на случай обновлений)
         cols = [
             ("tractor_level", "INTEGER DEFAULT 0"), ("last_tractor_collect", "REAL DEFAULT 0"),
             ("mutagen", "INTEGER DEFAULT 0"), ("is_hidden", "INTEGER DEFAULT 0"),
@@ -178,6 +190,7 @@ async def init_db():
             except: pass
         await db.commit()
 
+# --- SQL Хелперы ---
 async def get_user(user_id):
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
@@ -189,15 +202,19 @@ async def get_user(user_id):
                 return await get_user(user_id)
             return user
 
+async def update_stat(user_id, column, value):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(f'UPDATE users SET {column} = ? WHERE user_id = ?', (value, user_id))
+        await db.commit()
+
 async def update_username(user_id, name):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (name, user_id))
         await db.commit()
 
-async def update_stat(user_id, column, value):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(f'UPDATE users SET {column} = ? WHERE user_id = ?', (value, user_id))
-        await db.commit()
+# ==========================================
+# 5. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Утилиты)
+# ==========================================
 
 def format_num(num):
     try: return "{:,}".format(int(float(num))).replace(",", " ")
@@ -214,6 +231,7 @@ def format_time_spent(seconds_played):
     if days > 0: return f"{days} д. {hours} ч."
     return f"{hours} ч. {int((seconds_played % 3600) // 60)} мин."
 
+# Система чистого чата (удаление предыдущих сообщений)
 LAST_MESSAGES = {}
 async def send_with_cleanup(message: types.Message, text: str, reply_markup=None):
     user_id = message.from_user.id
@@ -237,64 +255,27 @@ async def delete_later(msg, delay=2):
     try: await msg.delete()
     except: pass
 
-async def bot_db_exec(query, args=()):
+async def add_xp(user_id, amount, message):
+    """Начисление опыта для Battle Pass"""
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(query, args)
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT bp_level, bp_xp FROM users WHERE user_id = ?', (user_id,)) as c:
+            user = await c.fetchone()
+            
+        current_lvl, current_xp = user['bp_level'], user['bp_xp'] + amount
+        needed_xp = current_lvl * XP_PER_LEVEL_BASE
+        
+        if current_xp >= needed_xp and current_lvl < MAX_BP_LEVEL:
+            current_xp -= needed_xp
+            current_lvl += 1
+            try: await message.answer(f"🎉 <b>LEVEL UP!</b> Новый уровень пропуска: {current_lvl}", parse_mode="HTML")
+            except: pass
+            
+        await db.execute('UPDATE users SET bp_level = ?, bp_xp = ? WHERE user_id = ?', (current_lvl, current_xp, user_id))
         await db.commit()
 
 # ==========================================
-# 4. MIDDLEWARE
-# ==========================================
-
-class GameMiddleware(BaseMiddleware):
-    async def __call__(self, handler, event: Message, data: dict):
-        if isinstance(event, Message):
-            user = event.from_user
-            action_type = "MSG"
-            content = event.text
-        elif isinstance(event, CallbackQuery):
-            user = event.from_user
-            action_type = "BTN"
-            content = event.data
-        else:
-            return await handler(event, data)
-            
-        if not user: return await handler(event, data)
-
-        current_time = time.time()
-        asyncio.create_task(update_username(user.id, user.full_name))
-        
-        async def set_active():
-            async with aiosqlite.connect(DB_NAME) as db:
-                await db.execute('UPDATE users SET last_active = ? WHERE user_id = ?', (current_time, user.id))
-                await db.commit()
-        asyncio.create_task(set_active())
-
-        if user.username and user.username.lower() in ADMINS:
-            return await handler(event, data)
-
-        if MAINTENANCE_MODE:
-            if isinstance(event, Message): await event.answer("🚧 Техработы.")
-            return 
-
-        # ANTI-SPAM
-        if user.id in muted_users:
-            if current_time < muted_users[user.id]: return 
-            else: del muted_users[user.id]
-
-        if user.id not in user_timestamps: user_timestamps[user.id] = []
-        user_timestamps[user.id] = [t for t in user_timestamps[user.id] if current_time - t < 1.0]
-        user_timestamps[user.id].append(current_time)
-        
-        if len(user_timestamps[user.id]) > 12:
-            muted_users[user.id] = current_time + 60
-            if isinstance(event, Message): await event.answer("⛔️ Остынь!")
-            return 
-
-        return await handler(event, data)
-
-# ==========================================
-# 5. КЛАВИАТУРЫ И ТЕКСТЫ
+# 6. КЛАВИАТУРЫ И ГЕНЕРАЦИЯ МЕНЮ
 # ==========================================
 
 def main_keyboard():
@@ -321,6 +302,7 @@ def upgrades_keyboard(u, info_mode=False):
     discount = min(0.30, lvl_agr * ACAD_DISCOUNT_PER_LVL)
     price_factor = 1.0 - discount
     
+    # Расчет цен (Экспонента)
     p_click = int(50 * (1.4 ** u['click_level']) * price_factor)
     p_tomato = int(150 * (1.5 ** u['tomato_level']) * price_factor)
     p_luck = int(500 * (1.6 ** u['luck_level']) * price_factor)
@@ -330,6 +312,7 @@ def upgrades_keyboard(u, info_mode=False):
     p_gmo = int(2000 * (1.7 ** u['gmo_level']) * price_factor)
     p_tractor = int(5000 * (1.6 ** u['tractor_level']) * price_factor)
 
+    d_text = f" 🔥-{int(discount*100)}%" if discount > 0 else ""
     icon = "ℹ️" if info_mode else "🛒"
     mode_btn = "🔙 К покупке" if info_mode else "❔ Инфо режим"
     mode_cb = "shop_mode_buy" if info_mode else "shop_mode_info"
@@ -383,11 +366,10 @@ def get_academy_stats(u):
     discount = min(0.30, lvl_agr * ACAD_DISCOUNT_PER_LVL)
     total_lvl = lvl_man + lvl_log + lvl_agr
     
-    if total_lvl == 0: title = "Абитуриент"
-    elif total_lvl < 5: title = "Студент"
-    elif total_lvl < 15: title = "Бакалавр"
-    elif total_lvl < 30: title = "Магистр"
-    else: title = "Профессор"
+    title = "Абитуриент"
+    if total_lvl >= 5: title = "Студент"
+    if total_lvl >= 15: title = "Бакалавр"
+    if total_lvl >= 30: title = "Магистр"
     
     return {"income": income, "max_time": max_time, "discount": discount, "title": title, "total_lvl": total_lvl}
 
@@ -467,27 +449,42 @@ async def send_card_info(message, card_id, count, is_owner=True, owner_id=None):
             await message.answer(f"🖼 <i>(Нет фото)</i>\n\n" + caption, reply_markup=kb, parse_mode="HTML")
     except: pass
 
-async def add_xp(user_id, amount, message):
+async def get_market_page(page=0):
     async with aiosqlite.connect(DB_NAME) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute('SELECT bp_level, bp_xp FROM users WHERE user_id = ?', (user_id,)) as c:
-            user = await c.fetchone()
-            
-        current_lvl, current_xp = user['bp_level'], user['bp_xp'] + amount
-        needed_xp = current_lvl * XP_PER_LEVEL_BASE
-        
-        if current_xp >= needed_xp and current_lvl < MAX_BP_LEVEL:
-            current_xp -= needed_xp
-            current_lvl += 1
-            # Simple notification
-            try: await message.answer(f"🎉 <b>LEVEL UP!</b> Новый уровень пропуска: {current_lvl}", parse_mode="HTML")
-            except: pass
-            
-        await db.execute('UPDATE users SET bp_level = ?, bp_xp = ? WHERE user_id = ?', (current_lvl, current_xp, user_id))
-        await db.commit()
+        cnt = await (await db.execute("SELECT COUNT(*) FROM market")).fetchone()
+        lot = await (await db.execute("SELECT * FROM market LIMIT 1 OFFSET ?", (page,))).fetchone()
+    return lot, cnt[0]
+
+async def show_market_page(msg, page=0):
+    lot, total = await get_market_page(page)
+    if not lot:
+        text = "⚖️ <b>БИРЖА:</b> Пусто."
+        kb = None
+        if isinstance(msg, CallbackQuery): await msg.message.edit_text(text, parse_mode="HTML")
+        else: await msg.answer(text, parse_mode="HTML")
+        return
+
+    lid, seller, _, cid, price = lot[0], lot[2], lot[1], lot[3], lot[4]
+    cname = CARDS.get(cid, {}).get("name", "?")
+    
+    text = f"⚖️ <b>ЛОТ {page+1}/{total}</b>\n📦 {cname}\n👤 {seller}\n💰 {format_num(price)} 🍅"
+    
+    uid = msg.from_user.id
+    act_btn = InlineKeyboardButton(text="🗑 Удалить", callback_data=f"market_delete_{lid}") if uid == seller else InlineKeyboardButton(text="💳 Купить", callback_data=f"buy_lot_{lid}")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [act_btn],
+        [InlineKeyboardButton(text="⬅️", callback_data=f"market_page_{page-1}"), 
+         InlineKeyboardButton(text=f"{page+1}", callback_data="ignore"),
+         InlineKeyboardButton(text="➡️", callback_data=f"market_page_{page+1}")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"market_page_{page}")]
+    ])
+    
+    if isinstance(msg, CallbackQuery): await msg.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    else: await msg.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # ==========================================
-# 7. ХЕНДЛЕРЫ
+# 7. ГЛАВНЫЕ ХЕНДЛЕРЫ И МИДДЛВАРЬ
 # ==========================================
 
 bot = Bot(token=TOKEN)
@@ -500,7 +497,7 @@ async def cmd_start(message: types.Message):
     u = await get_user(user_id)
     if u['is_banned']: return
 
-    # Трактор
+    # Трактор (AFK фарм)
     if u['tractor_level'] > 0:
         now = time.time()
         last = u['last_tractor_collect'] or now
@@ -588,7 +585,7 @@ async def plant_handler(message: types.Message):
         
     await send_with_cleanup(message, text, reply_markup=main_keyboard())
 
-# --- МАГАЗИН ---
+# --- ТОРГОВЕЦ (ФИКС) ---
 @dp.message(F.text == "💲 Торговец")
 async def shop_menu(message: types.Message):
     user = await get_user(message.from_user.id)
@@ -645,47 +642,11 @@ async def buy_upgrade(cb: CallbackQuery):
     else:
         await cb.answer(f"Не хватает {format_num(cost)}!", show_alert=True)
 
-# --- СКЛАД ---
-@dp.message(F.text.in_({"📦 Хранилище", "🎒 Склад"}))
-@dp.callback_query(F.data == "refresh_inv")
-async def show_inventory(message_or_call: types.Union[Message, CallbackQuery]):
-    user_id = message_or_call.from_user.id
-    u = await get_user(user_id)
-    
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count > 0', (user_id,)) as c:
-            my_cards = await c.fetchall()
-            
-    card_list_text = ""
-    if my_cards:
-        card_lines = []
-        for c_id, count in my_cards:
-             if c_id in CARDS:
-                 card_name = CARDS[c_id]['name']
-                 card_lines.append(f"  └ <b>{card_name}</b> — {count} шт.")
-        card_list_text = "\n" + "\n".join(card_lines)
-    else:
-        card_list_text = "\n  └ <i>Активы отсутствуют</i>"
-        
-    text = (f"📦 <b>СОСТОЯНИЕ СКЛАДА</b>\n{UI_SEP}\n🧪 Химикаты: {u['fertilizer']} ед.\n"
-            f"🍊 Валюта: {format_num(u['mandarins'])} кг\n\n📂 <b>АКТИВЫ:</b>{card_list_text}\n{UI_SEP}")
-    
-    kb = inventory_keyboard(u['fertilizer'], u['mandarins'])
-    
-    if isinstance(message_or_call, CallbackQuery):
-        try:
-            await message_or_call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-            await message_or_call.answer()
-        except: await message_or_call.answer("✅ Актуально")
-    else:
-        await message_or_call.answer(text, reply_markup=kb, parse_mode="HTML")
-
-# --- ЛАБОРАТОРИЯ ---
+# --- ЛАБОРАТОРИЯ (ФИКС) ---
 @dp.message(F.text == "🧬 Лаборатория")
 async def lab_menu(message: types.Message):
-    user_id = message.from_user.id
-    u = await get_user(user_id)
-    text = (f"🧬 <b>ГЕННАЯ ЛАБОРАТОРИЯ</b>\n{UI_SEP}\n🧪 Мутаген: {u['mutagen']} ед.\n"
+    user = await get_user(message.from_user.id)
+    text = (f"🧬 <b>ГЕННАЯ ЛАБОРАТОРИЯ</b>\n{UI_SEP}\n🧪 Мутаген: {user['mutagen']} ед.\n"
             f"<b>СИНТЕЗ:</b> {CRAFT_CARDS_NEEDED} карты + {CRAFT_COST_MUTAGEN} мутаген = 1 крутая карта.")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"Купить Мутаген ({format_num(MUTAGEN_SHOP_PRICE)})", callback_data="buy_mutagen")],
@@ -851,6 +812,19 @@ async def peek_card(cb: CallbackQuery):
 @dp.callback_query(F.data == "delete_msg")
 async def del_msg(cb: CallbackQuery): await cb.message.delete()
 
+@dp.message(F.text == "⚖️ Биржа Игроков")
+async def show_market(message: types.Message):
+    await show_market_page(message)
+
+@dp.callback_query(F.data.startswith("market_page_"))
+async def market_page_h(cb: CallbackQuery):
+    await show_market_page(cb, int(cb.data.split("_")[2]))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("buy_lot_"))
+async def buy_lot_h(cb: CallbackQuery):
+    await buy_lot(cb)
+
 # --- КАЗИНО ---
 @dp.message(F.text == "🎲 Казино")
 async def casino_handler(message: types.Message):
@@ -937,43 +911,7 @@ async def bp_claim(cb: CallbackQuery):
     await cb.answer("Получено!")
     await cb.message.delete()
 
-# --- РЫНОК ---
-@dp.message(F.text == "⚖️ Биржа Игроков")
-async def show_market(msg: Message):
-    async with aiosqlite.connect(DB_NAME) as db:
-        res = await db.execute_fetchall("SELECT * FROM market LIMIT 1")
-    if not res: await msg.answer("Рынок пуст.")
-    else:
-        # Упрощенный показ первого лота (можно расширить пагинацией из прошлых версий)
-        l = res[0]
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Купить", callback_data=f"buy_lot_{l[0]}")]])
-        await msg.answer(f"Лот: {CARDS.get(l[3],{}).get('name','?')} за {l[4]}", reply_markup=kb)
-
-@dp.callback_query(F.data.startswith("buy_lot_"))
-async def buy_lot(cb: CallbackQuery):
-    lid = int(cb.data.split("_")[2])
-    uid = cb.from_user.id
-    async with aiosqlite.connect(DB_NAME) as db:
-        lot = await (await db.execute("SELECT * FROM market WHERE lot_id=?", (lid,))).fetchone()
-        if not lot: return await cb.answer("Лот ушел", show_alert=True)
-        seller, cid, price = lot[1], lot[3], lot[4]
-        
-        buyer = await (await db.execute("SELECT tomatoes FROM users WHERE user_id=?", (uid,))).fetchone()
-        if buyer[0] < price: return await cb.answer("Нет денег", show_alert=True)
-        
-        await db.execute("UPDATE users SET tomatoes=tomatoes-? WHERE user_id=?", (price, uid))
-        await db.execute("UPDATE users SET tomatoes=tomatoes+? WHERE user_id=?", (int(price*0.9), seller))
-        
-        exists = await (await db.execute("SELECT 1 FROM user_cards WHERE user_id=? AND card_id=?", (uid, cid))).fetchone()
-        if exists: await db.execute("UPDATE user_cards SET count=count+1 WHERE user_id=? AND card_id=?", (uid, cid))
-        else: await db.execute("INSERT INTO user_cards VALUES (?,?,1)", (uid, cid))
-        
-        await db.execute("DELETE FROM market WHERE lot_id=?", (lid,))
-        await db.commit()
-    await cb.answer("Куплено!")
-    await cb.message.delete()
-
-# --- АДМИН ПАНЕЛЬ ---
+# --- НОВАЯ АДМИН ПАНЕЛЬ (GUI) ---
 @dp.message(Command("admin"))
 async def admin_gui(message: types.Message, state: FSMContext):
     if message.from_user.username.lower() not in ADMINS: return
@@ -983,6 +921,9 @@ async def admin_gui(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text="Закрыть", callback_data="delete_msg")]
     ])
     await message.answer("Админка", reply_markup=kb)
+
+@dp.callback_query(F.data == "delete_msg")
+async def delete_msg(cb: CallbackQuery): await cb.message.delete()
 
 @dp.callback_query(F.data == "adm_eco")
 async def adm_eco(cb: CallbackQuery, state: FSMContext):
@@ -1041,46 +982,37 @@ async def adm_card_fin(msg: Message, state: FSMContext):
 async def admin_console_loop(bot: Bot):
     global CONSOLE_LOGS, MAINTENANCE_MODE
     os.system('cls' if os.name == 'nt' else 'clear')
-    print(f"{Fore.GREEN}BOT STARTED!{Style.RESET_ALL}")
-    
+    print("Bot Started!")
     while True:
         try:
-            sys.stdout.write(f"\n{Fore.BLUE}admin>{Style.RESET_ALL} "); sys.stdout.flush()
+            sys.stdout.write("\nadmin> "); sys.stdout.flush()
             cmd = await aioconsole.ainput("")
             if not cmd: continue
             parts = cmd.split()
             c = parts[0].lower()
             
             if c == "restart": os.execl(sys.executable, sys.executable, *sys.argv)
-            elif c == "check" and len(parts)>1:
-                async with aiosqlite.connect(DB_NAME) as db:
-                    u = await (await db.execute("SELECT * FROM users WHERE user_id=?", (parts[1],))).fetchone()
-                    print(u if u else "Not found")
+            elif c == "logs": CONSOLE_LOGS = not CONSOLE_LOGS; print(f"Logs: {CONSOLE_LOGS}")
             elif c == "give" and len(parts)>3:
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute(f"UPDATE users SET {parts[2]}={parts[2]}+? WHERE user_id=?", (int(parts[3]), int(parts[1])))
                     await db.commit()
                 print("Given.")
-            elif c == "bc":
-                msg = " ".join(parts[1:])
+            elif c == "sql":
+                q = " ".join(parts[1:])
                 async with aiosqlite.connect(DB_NAME) as db:
-                    users = await db.execute_fetchall("SELECT user_id FROM users")
-                for (u,) in users:
-                    try: await bot.send_message(u, f"🔔 {msg}", parse_mode="HTML")
-                    except: pass
-                print("Sent.")
+                    await db.execute(q); await db.commit()
+                print("Executed.")
         except Exception as e: print(e)
 
 # --- START ---
 async def main():
     await init_db()
-    
-    # Auto-load admins
     async with aiosqlite.connect(DB_NAME) as db:
         admins = await db.execute_fetchall("SELECT username FROM users WHERE is_admin=1")
         for (a,) in admins: 
             if a and a.lower() not in ADMINS: ADMINS.append(a.lower())
-            
+    
     await bot.delete_webhook(drop_pending_updates=True)
     await asyncio.gather(dp.start_polling(bot), admin_console_loop(bot))
 
