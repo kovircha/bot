@@ -784,7 +784,8 @@ async def init_db():
             ("acad_management", "INTEGER DEFAULT 0"),
             ("acad_logistics", "INTEGER DEFAULT 0"),
             ("acad_agronomy", "INTEGER DEFAULT 0"),
-            ("last_acad_collect", "REAL DEFAULT 0")
+            ("last_acad_collect", "REAL DEFAULT 0"),
+            ("is_hidden", "INTEGER DEFAULT 0") 
         ]
         
         for col, definition in new_columns:
@@ -1104,16 +1105,17 @@ def format_time_spent(seconds_played):
 # Генерация текста и кнопок
 async def get_leaderboard_data(top_type="tomatoes"):
     async with aiosqlite.connect(DB_NAME) as db:
+        # Добавляем фильтр WHERE is_hidden = 0
         if top_type == "tomatoes":
-            query = 'SELECT user_id, username, tomatoes FROM users ORDER BY tomatoes DESC LIMIT 10'
+            query = 'SELECT user_id, username, tomatoes FROM users WHERE is_hidden = 0 ORDER BY tomatoes DESC LIMIT 10'
             title = "🍅 ТОП МАГНАТОВ (Помидоры)"
             prev, nxt = "time", "milk"
         elif top_type == "milk":
-            query = 'SELECT user_id, username, milk FROM users ORDER BY milk DESC LIMIT 10'
+            query = 'SELECT user_id, username, milk FROM users WHERE is_hidden = 0 ORDER BY milk DESC LIMIT 10'
             title = "🥛 ТОП ДОЯРОК (Молоко)"
             prev, nxt = "tomatoes", "time"
         elif top_type == "time":
-            query = 'SELECT user_id, username, reg_date FROM users ORDER BY reg_date ASC LIMIT 10'
+            query = 'SELECT user_id, username, reg_date FROM users WHERE is_hidden = 0 ORDER BY reg_date ASC LIMIT 10'
             title = "⏳ ТОП ОЛДОВ (В игре)"
             prev, nxt = "milk", "tomatoes"
 
@@ -2373,6 +2375,104 @@ async def view_other_collection(cb: CallbackQuery):
     
     await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
 
+# --- КОМАНДЫ СКРЫТИЯ (HIDE / UNHIDE) ---
+
+@dp.message(Command("hide"))
+async def cmd_hide(message: types.Message):
+    # Проверка на админа
+    if message.from_user.username.lower() not in ADMINS:
+        return
+
+    args = message.text.split()
+    # Варианты: /hide admins, /hide admin @nick, /hide admin 12345
+    
+    if len(args) < 2:
+        await message.answer("⚠️ Используйте: `/hide admins` или `/hide admin <user>`", parse_mode="Markdown")
+        return
+
+    target_type = args[1].lower()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        
+        # 1. Скрыть ВСЕХ админов
+        if target_type == "admins":
+            await db.execute('UPDATE users SET is_hidden = 1 WHERE is_admin = 1')
+            await db.commit()
+            await message.answer("🕵️‍♂️ <b>ОПЕРАЦИЯ ВЫПОЛНЕНА:</b>\nВсе администраторы скрыты из топов.", parse_mode="HTML")
+
+        # 2. Скрыть КОНКРЕТНОГО игрока
+        elif target_type == "admin" or target_type == "user":
+            if len(args) < 3:
+                await message.answer("⚠️ Укажите ник или ID.", parse_mode="Markdown")
+                return
+            
+            target_input = args[2]
+            # Определяем поиск по ID или Нику
+            if target_input.isdigit():
+                where_clause = "user_id = ?"
+                val = int(target_input)
+            else:
+                where_clause = "username LIKE ?"
+                val = target_input.replace("@", "")
+
+            # Проверяем и обновляем
+            async with db.execute(f'SELECT username FROM users WHERE {where_clause}', (val,)) as c:
+                user = await c.fetchone()
+            
+            if user:
+                await db.execute(f'UPDATE users SET is_hidden = 1 WHERE {where_clause}', (val,))
+                await db.commit()
+                await message.answer(f"✅ Игрок <b>{user[0]}</b> скрыт из топов.", parse_mode="HTML")
+            else:
+                await message.answer("❌ Игрок не найден.")
+        else:
+             await message.answer("⚠️ Неверный аргумент. Используйте admins или admin.")
+
+@dp.message(Command("unhide"))
+async def cmd_unhide(message: types.Message):
+    # Проверка на админа
+    if message.from_user.username.lower() not in ADMINS:
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("⚠️ Используйте: `/unhide admins` или `/unhide admin <user>`", parse_mode="Markdown")
+        return
+
+    target_type = args[1].lower()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        
+        # 1. Раскрыть ВСЕХ админов
+        if target_type == "admins":
+            await db.execute('UPDATE users SET is_hidden = 0 WHERE is_admin = 1')
+            await db.commit()
+            await message.answer("👁 <b>ОПЕРАЦИЯ ВЫПОЛНЕНА:</b>\nАдминистраторы снова видны в топах.", parse_mode="HTML")
+
+        # 2. Раскрыть КОНКРЕТНОГО игрока
+        elif target_type == "admin" or target_type == "user":
+            if len(args) < 3:
+                await message.answer("⚠️ Укажите ник или ID.", parse_mode="Markdown")
+                return
+            
+            target_input = args[2]
+            if target_input.isdigit():
+                where_clause = "user_id = ?"
+                val = int(target_input)
+            else:
+                where_clause = "username LIKE ?"
+                val = target_input.replace("@", "")
+
+            async with db.execute(f'SELECT username FROM users WHERE {where_clause}', (val,)) as c:
+                user = await c.fetchone()
+            
+            if user:
+                await db.execute(f'UPDATE users SET is_hidden = 0 WHERE {where_clause}', (val,))
+                await db.commit()
+                await message.answer(f"✅ Игрок <b>{user[0]}</b> возвращен в топы.", parse_mode="HTML")
+            else:
+                await message.answer("❌ Игрок не найден.")
+
 # --- АДМИН-КОНСОЛЬ ---
 async def admin_console_loop(bot: Bot):
     global CONSOLE_LOGS, MAINTENANCE_MODE
@@ -3158,3 +3258,4 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
