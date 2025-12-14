@@ -495,7 +495,8 @@ async def show_market_page(message_or_call, page=0):
     # 4. Формируем красивый текст (Премиум дизайн)
     rarity_data = RARITY_INFO.get(card_info.get("rarity", "common"), RARITY_INFO["common"])
     # Используем цвет в HTML теге font (телеграм это поддерживает)
-    rarity_text = f"<font color=\"#{hex(rarity_data['color_code'])[2:]}\">{rarity_data['name']}</font>"
+    # Внутри show_market_page
+    rarity_text = f"<b>{rarity_data['name']}</b>"
     
     text = (
         f"⚖️ <b>ТОРГОВАЯ БИРЖА</b> | Лот #{page + 1}/{total}\n"
@@ -544,7 +545,8 @@ async def show_market_page(message_or_call, page=0):
     
     # Стилизация редкости
     rarity_data = RARITY_INFO.get(card_info.get("rarity", "common"), RARITY_INFO["common"])
-    rarity_text = f"<font color=\"#{hex(rarity_data['color_code'])[2:]}\">{rarity_data['name']}</font>"
+    # Внутри show_market_page
+    rarity_text = f"<b>{rarity_data['name']}</b>"
     
     text = (
         f"⚖️ <b>ТОРГОВАЯ БИРЖА</b> | Лот #{page + 1}/{total}\n"
@@ -1101,64 +1103,53 @@ def format_time_spent(seconds_played):
 
 # Генерация текста и кнопок
 async def get_leaderboard_data(top_type="tomatoes"):
-    # top_type может быть: 'tomatoes', 'milk', 'time'
-    
     async with aiosqlite.connect(DB_NAME) as db:
         if top_type == "tomatoes":
-            query = 'SELECT username, tomatoes FROM users ORDER BY tomatoes DESC LIMIT 10'
+            query = 'SELECT user_id, username, tomatoes FROM users ORDER BY tomatoes DESC LIMIT 10'
             title = "🍅 ТОП МАГНАТОВ (Помидоры)"
-            metric_suffix = " 🍅"
-            prev_type, next_type = "time", "milk" # Стрелки
-            
+            prev, nxt = "time", "milk"
         elif top_type == "milk":
-            query = 'SELECT username, milk FROM users ORDER BY milk DESC LIMIT 10'
+            query = 'SELECT user_id, username, milk FROM users ORDER BY milk DESC LIMIT 10'
             title = "🥛 ТОП ДОЯРОК (Молоко)"
-            metric_suffix = " л."
-            prev_type, next_type = "tomatoes", "time"
-            
+            prev, nxt = "tomatoes", "time"
         elif top_type == "time":
-            # Сортируем по reg_date ASC (кто раньше зарегался - у того больше времени)
-            query = 'SELECT username, reg_date FROM users ORDER BY reg_date ASC LIMIT 10'
+            query = 'SELECT user_id, username, reg_date FROM users ORDER BY reg_date ASC LIMIT 10'
             title = "⏳ ТОП ОЛДОВ (В игре)"
-            metric_suffix = ""
-            prev_type, next_type = "milk", "tomatoes"
+            prev, nxt = "milk", "tomatoes"
 
         async with db.execute(query) as c:
             res = await c.fetchall()
 
-    text = f"🏆 <b>{title}</b>\n\n"
+    text = f"🏆 <b>{title}</b>\n<i>Нажми на игрока, чтобы открыть профиль:</i>"
     
-    if not res:
-        text += "<i>Пока пусто...</i>"
-    
+    kb_builder = []
     current_time = time.time()
     
     for i, row in enumerate(res):
-        name = row[0]
-        value = row[1]
+        uid = row[0]
+        name = row[1]
+        value = row[2]
         
-        # Красивое отображение значений
+        # Форматирование значения
         if top_type == "time":
-            # Считаем сколько времени прошло с регистрации
             val_str = format_time_spent(current_time - value)
         else:
-            val_str = f"{format_num(value)}{metric_suffix}"
+            val_str = format_num(value)
             
-        # Медали для топ 3
         medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
         
-        text += f"{medal} <b>{name}</b> — {val_str}\n"
+        # КНОПКА ИГРОКА: "1. Nickname - 5000"
+        btn_text = f"{medal} {name[:10]}... — {val_str}"
+        kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"view_profile_{uid}")])
 
-    # Клавиатура переключения
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⬅️", callback_data=f"top_{prev_type}"),
-            InlineKeyboardButton(text="🔄 Обновить", callback_data=f"top_{top_type}"),
-            InlineKeyboardButton(text="➡️", callback_data=f"top_{next_type}")
-        ]
+    # Кнопки навигации
+    kb_builder.append([
+        InlineKeyboardButton(text="⬅️", callback_data=f"top_{prev}"),
+        InlineKeyboardButton(text="🔄", callback_data=f"top_{top_type}"),
+        InlineKeyboardButton(text="➡️", callback_data=f"top_{nxt}")
     ])
     
-    return text, kb
+    return text, InlineKeyboardMarkup(inline_keyboard=kb_builder)
 
 # --- КАЗИНО (С УЧЕТОМ ШУЛЕРА) ---
 @dp.message(F.text == "🎲 Казино")
@@ -2284,6 +2275,78 @@ async def view_card_handler(cb: CallbackQuery):
     except Exception as e:
         print(f"Ошибка просмотра карты: {e}")
         await cb.answer("Ошибка доступа к карте", show_alert=True)
+
+# --- ХЕНДЛЕР: ПРОСМОТР ЧУЖОГО ПРОФИЛЯ ---
+@dp.callback_query(F.data.startswith("view_profile_"))
+async def view_other_profile(cb: CallbackQuery):
+    target_id = int(cb.data.split("_")[2])
+    
+    # Загружаем данные ЦЕЛИ (target_id), а не свои
+    user = await get_user(target_id)
+    
+    if not user:
+        await cb.answer("❌ Игрок не найден (возможно, удален).", show_alert=True)
+        return
+
+    # Красивый вывод (как в Мой Профиль, но для другого)
+    text = (
+        f"🕵️‍♂️ <b>ДОСЬЕ ИГРОКА</b>\n"
+        f"{UI_SEP}\n"
+        f"💳 <b>ID:</b> <code>{user['user_id']}</code>\n"
+        f"🏷 <b>Имя:</b> {user['username']}\n"
+        f"🔰 <b>Статус:</b> {user['custom_status']}\n\n"
+        
+        f"<b>📊 СТАТИСТИКА</b>\n"
+        f"{UI_BULLET} Молоко: <code>{format_num(user['milk'])}</code> Л\n"
+        f"{UI_BULLET} Помидоры: <code>{format_num(user['tomatoes'])}</code> шт\n"
+        f"{UI_BULLET} Уровень клика: <code>{user['click_level']}</code>\n"
+        f"{UI_SEP}"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📂 Коллекция игрока", callback_data=f"view_collection_{target_id}")],
+        [InlineKeyboardButton(text="🔙 Назад в топ", callback_data="top_tomatoes")]
+    ])
+    
+    try:
+        await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except:
+        await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# --- ХЕНДЛЕР: КОЛЛЕКЦИЯ ДРУГОГО ИГРОКА ---
+@dp.callback_query(F.data.startswith("view_collection_"))
+async def view_other_collection(cb: CallbackQuery):
+    target_id = int(cb.data.split("_")[2])
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Узнаем ник владельца для заголовка
+        async with db.execute('SELECT username FROM users WHERE user_id = ?', (target_id,)) as c:
+            res = await c.fetchone()
+            owner_name = res[0] if res else "Unknown"
+
+        # Грузим карты
+        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count > 0', (target_id,)) as c:
+            target_cards = await c.fetchall()
+
+    if not target_cards:
+        await cb.answer(f"У {owner_name} нет карточек.", show_alert=True)
+        return
+
+    text = f"📂 <b>КОЛЛЕКЦИЯ:</b> {owner_name}\n<i>Нажми на карту для просмотра:</i>\n\n"
+    kb_builder = []
+    
+    for card_id, count in target_cards:
+        if card_id not in CARDS: continue
+        card_data = CARDS[card_id]
+        rarity_icon = RARITY_INFO.get(card_data.get("rarity", "common"), RARITY_INFO["common"])["icon"]
+        
+        # Кнопка просмотра карты
+        btn_text = f"{rarity_icon} {card_data['name']} (x{count})"
+        kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"view_card_{card_id}")])
+
+    kb_builder.append([InlineKeyboardButton(text="🔙 К профилю", callback_data=f"view_profile_{target_id}")])
+    
+    await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
 
 # --- АДМИН-КОНСОЛЬ ---
 async def admin_console_loop(bot: Bot):
