@@ -1120,15 +1120,26 @@ async def get_leaderboard_data(top_type="tomatoes"):
         async with db.execute(query) as c:
             res = await c.fetchall()
 
-    text = f"🏆 <b>{title}</b>\n<i>Нажми на игрока, чтобы открыть профиль:</i>"
+    # 1. Формируем ТЕКСТОВЫЙ список (читаемый)
+    text = f"🏆 <b>{title}</b>\n{UI_SEP}\n"
     
-    kb_builder = []
+    if not res:
+        text += "<i>Список пуст...</i>"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Обновить", callback_data=f"top_{top_type}")]])
+        return text, kb
+
     current_time = time.time()
+    
+    # Список кнопок-ссылок на профили
+    profile_buttons = []
     
     for i, row in enumerate(res):
         uid = row[0]
         name = row[1]
         value = row[2]
+        
+        # Обрезаем слишком длинные ники для ТЕКСТА (чтобы не ломали верстку), но оставляем читаемыми
+        display_name = name[:20] + "..." if len(name) > 20 else name
         
         # Форматирование значения
         if top_type == "time":
@@ -1138,18 +1149,32 @@ async def get_leaderboard_data(top_type="tomatoes"):
             
         medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
         
-        # КНОПКА ИГРОКА: "1. Nickname - 5000"
-        btn_text = f"{medal} {name[:10]}... — {val_str}"
-        kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"view_profile_{uid}")])
+        # Строка в текстовом списке
+        text += f"{medal} <b>{display_name}</b> — {val_str}\n"
+        
+        # Добавляем кнопку с номером места (1 👤, 2 👤 и т.д.)
+        # Это компактно и удобно нажимать
+        profile_buttons.append(InlineKeyboardButton(text=f"{i+1} 👤", callback_data=f"view_profile_{uid}"))
 
-    # Кнопки навигации
-    kb_builder.append([
+    text += f"\n<i>Нажми на кнопку с номером места, чтобы открыть профиль игрока:</i>"
+
+    # 2. Собираем КЛАВИАТУРУ
+    kb_rows = []
+    
+    # Разбиваем кнопки профилей на ряды по 5 штук (чтобы было красиво)
+    # [1 👤] [2 👤] [3 👤] [4 👤] [5 👤]
+    chunk_size = 5
+    for i in range(0, len(profile_buttons), chunk_size):
+        kb_rows.append(profile_buttons[i:i + chunk_size])
+
+    # Добавляем навигацию в самый низ
+    kb_rows.append([
         InlineKeyboardButton(text="⬅️", callback_data=f"top_{prev}"),
-        InlineKeyboardButton(text="🔄", callback_data=f"top_{top_type}"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"top_{top_type}"),
         InlineKeyboardButton(text="➡️", callback_data=f"top_{nxt}")
     ])
     
-    return text, InlineKeyboardMarkup(inline_keyboard=kb_builder)
+    return text, InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
 # --- КАЗИНО (С УЧЕТОМ ШУЛЕРА) ---
 @dp.message(F.text == "🎲 Казино")
@@ -3131,4 +3156,5 @@ async def main():
     )
 
 if __name__ == "__main__":
+
     asyncio.run(main())
