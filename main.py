@@ -975,7 +975,7 @@ async def milk_handler(message: types.Message):
         text = f"🥛 <b>СБОР:</b> {boost_icon}+{base_milk} Л (Всего: {format_num(new_total)} Л)"
 
     # Используем функцию "чистого чата"
-    await send_with_cleanup(message, text, reply_markup=main_keyboard())
+    await message.answer(text, reply_markup=main_keyboard(), parse_mode="HTML")
 
 # --- ПОЛИВ (С УЧЕТОМ ЭКОНОМИИ И ГМО) ---
 @dp.message(F.text.in_({"💦 Полить грядку"}))
@@ -2009,70 +2009,6 @@ async def show_cards_list(message: types.Message):
     except:
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# --- ИСПРАВЛЕННЫЙ ХЕНДЛЕР ПРОСМОТРА (Вставлять перед admin_console_loop) ---
-@dp.callback_query(F.data.startswith("view_card_"))
-async def view_card_handler(cb: CallbackQuery):
-    try:
-        # data format: view_card_morgenshtern
-        parts = cb.data.split("_")
-        if len(parts) < 3: return # Защита от битых данных
-        
-        card_id = parts[2]
-        user_id = cb.from_user.id
-        
-        # Проверяем наличие карты
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id)) as c:
-                res = await c.fetchone()
-                count = res[0] if res else 0
-
-        # Вызываем функцию отправки
-        await send_card_info(cb.message, card_id, count)
-        await cb.answer()
-        
-    except Exception as e:
-        print(f"Ошибка просмотра карты: {e}")
-        await cb.answer("❌ Ошибка: Не удалось открыть карту.", show_alert=True)
-
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ОТПРАВКИ (Замени старую def send_card_info) ---
-async def send_card_info(message: types.Message, card_id: str, count: int = 1):
-    if card_id not in CARDS:
-        await message.answer("❌ Ошибка: карта не найдена в базе.")
-        return
-
-    card = CARDS[card_id]
-    # Берем данные редкости
-    rarity_data = RARITY_INFO.get(card.get("rarity", "common"), RARITY_INFO["common"])
-    
-    # ИСПРАВЛЕНО: Используем <b> вместо <font>, так как Telegram не поддерживает font
-    rarity_text = f"<b>{rarity_data['name']}</b>"
-
-    # Текст карточки
-    caption = (
-        f"{rarity_data['icon']} <b>{card['name']}</b>\n"
-        f"➖➖➖➖➖➖➖➖\n"
-        f"🎭 Редкость: {rarity_text}\n"
-        f"📜 Описание: <i>{card.get('desc', 'Нет описания')}</i>\n"
-        f"🎒 В наличии: <b>{count} шт.</b>"
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💰 Продать карту", callback_data=f"sell_init_{card_id}")]
-    ])
-
-    image_filename = card.get("img", "default.jpg") 
-    image_path = os.path.join(CARDS_DIR, image_filename)
-    
-    try:
-        if os.path.exists(image_path):
-            photo = FSInputFile(image_path)
-            await message.answer_photo(photo, caption=caption, reply_markup=kb, parse_mode="HTML")
-        else:
-            # Если файла нет, отправляем текст, чтобы бот не молчал
-            await message.answer(f"🖼 <i>(Фото не найдено)</i>\n\n" + caption, reply_markup=kb, parse_mode="HTML")
-    except Exception as e:
-        await message.answer(f"Ошибка отправки: {e}\n\n" + caption, reply_markup=kb, parse_mode="HTML")
-
 # --- АДМИН ПАНЕЛЬ (GUI) ---
 
 # 1. Главное меню админки
@@ -2337,41 +2273,6 @@ async def view_other_profile(cb: CallbackQuery):
     except:
         await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# --- ХЕНДЛЕР: КОЛЛЕКЦИЯ ДРУГОГО ИГРОКА ---
-@dp.callback_query(F.data.startswith("view_collection_"))
-async def view_other_collection(cb: CallbackQuery):
-    target_id = int(cb.data.split("_")[2])
-    
-    async with aiosqlite.connect(DB_NAME) as db:
-        # Узнаем ник владельца для заголовка
-        async with db.execute('SELECT username FROM users WHERE user_id = ?', (target_id,)) as c:
-            res = await c.fetchone()
-            owner_name = res[0] if res else "Unknown"
-
-        # Грузим карты
-        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count > 0', (target_id,)) as c:
-            target_cards = await c.fetchall()
-
-    if not target_cards:
-        await cb.answer(f"У {owner_name} нет карточек.", show_alert=True)
-        return
-
-    text = f"📂 <b>КОЛЛЕКЦИЯ:</b> {owner_name}\n<i>Нажми на карту для просмотра:</i>\n\n"
-    kb_builder = []
-    
-    for card_id, count in target_cards:
-        if card_id not in CARDS: continue
-        card_data = CARDS[card_id]
-        rarity_icon = RARITY_INFO.get(card_data.get("rarity", "common"), RARITY_INFO["common"])["icon"]
-        
-        # Кнопка просмотра карты
-        btn_text = f"{rarity_icon} {card_data['name']} (x{count})"
-        kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"view_card_{card_id}")])
-
-    kb_builder.append([InlineKeyboardButton(text="🔙 К профилю", callback_data=f"view_profile_{target_id}")])
-    
-    await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
-
 # --- КОМАНДЫ СКРЫТИЯ (HIDE / UNHIDE) ---
 
 @dp.message(Command("hide"))
@@ -2469,6 +2370,176 @@ async def cmd_unhide(message: types.Message):
                 await message.answer(f"✅ Игрок <b>{user[0]}</b> возвращен в топы.", parse_mode="HTML")
             else:
                 await message.answer("❌ Игрок не найден.")
+
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ КНОПОК КАРТЫ ---
+async def get_card_keyboard(current_id, user_id, is_owner, target_id_if_not_owner=None):
+    """Генерирует кнопки: Стрелки и Продать (если владелец)"""
+    
+    # 1. Получаем список всех карт пользователя для навигации
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Получаем ID всех карт по порядку добавления
+        async with db.execute('SELECT card_id FROM user_cards WHERE user_id = ?', (user_id,)) as c:
+            all_cards = [row[0] for row in await c.fetchall()]
+    
+    kb_rows = []
+    
+    # 2. Логика навигации (Пред. / След.)
+    if current_id in all_cards:
+        idx = all_cards.index(current_id)
+        prev_card = all_cards[idx - 1] if idx > 0 else all_cards[-1] # Круговая навигация
+        next_card = all_cards[idx + 1] if idx < len(all_cards) - 1 else all_cards[0]
+        
+        # Если я владелец - используем view_card, если смотрю чужое - peek_card
+        if is_owner:
+            btn_prev = InlineKeyboardButton(text="⬅️", callback_data=f"view_card_{prev_card}")
+            btn_next = InlineKeyboardButton(text="➡️", callback_data=f"view_card_{next_card}")
+        else:
+            # target_id_if_not_owner - это ID того, чьи карты мы смотрим
+            btn_prev = InlineKeyboardButton(text="⬅️", callback_data=f"peek_card_{target_id_if_not_owner}_{prev_card}")
+            btn_next = InlineKeyboardButton(text="➡️", callback_data=f"peek_card_{target_id_if_not_owner}_{next_card}")
+            
+        kb_rows.append([btn_prev, InlineKeyboardButton(text=f"{idx+1}/{len(all_cards)}", callback_data="ignore"), btn_next])
+
+    # 3. Кнопка действия
+    if is_owner:
+        # Если это мои карты - кнопка Продать
+        kb_rows.append([InlineKeyboardButton(text=f"💰 Продать", callback_data=f"sell_init_{current_id}")])
+        kb_rows.append([InlineKeyboardButton(text="🔙 Назад в Склад", callback_data="refresh_inv")])
+    else:
+        # Если чужие - только Назад
+        kb_rows.append([InlineKeyboardButton(text="🔙 К профилю игрока", callback_data=f"view_profile_{target_id_if_not_owner}")])
+
+    return InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+# --- ОТПРАВКА КАРТОЧКИ (УНИВЕРСАЛЬНАЯ) ---
+async def render_card_message(message_or_call, card_id, count, is_owner, owner_id):
+    if card_id not in CARDS:
+        return
+
+    card = CARDS[card_id]
+    rarity_data = RARITY_INFO.get(card.get("rarity", "common"), RARITY_INFO["common"])
+    
+    caption = (
+        f"{rarity_data['icon']} <b>{card['name']}</b>\n"
+        f"{UI_SEP}\n"
+        f"🎭 <b>Редкость:</b> {rarity_data['name']}\n"
+        f"📜 <b>Описание:</b> <i>{card.get('desc', '...')}</i>\n\n"
+        f"🎒 <b>В наличии:</b> {count} шт."
+    )
+
+    # Генерируем умную клавиатуру со стрелочками
+    kb = await get_card_keyboard(card_id, owner_id, is_owner, owner_id if not is_owner else None)
+
+    image_filename = card.get("img", "default.jpg") 
+    image_path = os.path.join(CARDS_DIR, image_filename)
+    
+    # Отправка
+    media = None
+    if os.path.exists(image_path):
+        media = FSInputFile(image_path)
+    
+    # Если это Callback (редактируем старое сообщение) - это для стрелочек
+    if isinstance(message_or_call, CallbackQuery):
+        # Телеграм не дает поменять фото через edit_text, поэтому:
+        # Если сообщение уже с фото - меняем media. Если нет - удаляем и шлем новое.
+        try:
+            if media:
+                await message_or_call.message.edit_media(
+                    media=InputMediaPhoto(media=media, caption=caption, parse_mode="HTML"),
+                    reply_markup=kb
+                )
+            else:
+                # Если фото нет, просто текст меняем
+                await message_or_call.message.edit_caption(caption=caption, reply_markup=kb, parse_mode="HTML")
+        except:
+            # Если не вышло отредактировать (например, тип сообщения другой), шлем новое
+            await message_or_call.message.delete()
+            if media:
+                await message_or_call.message.answer_photo(media, caption=caption, reply_markup=kb, parse_mode="HTML")
+            else:
+                await message_or_call.message.answer(caption, reply_markup=kb, parse_mode="HTML")
+    else:
+        # Обычная отправка
+        if media:
+            await message_or_call.answer_photo(media, caption=caption, reply_markup=kb, parse_mode="HTML")
+        else:
+            await message_or_call.answer(caption, reply_markup=kb, parse_mode="HTML")
+
+
+# --- ХЕНДЛЕР 1: СМОТРЮ СВОИ КАРТЫ (view_card_ID) ---
+@dp.callback_query(F.data.startswith("view_card_"))
+async def view_my_card_handler(cb: CallbackQuery):
+    try:
+        card_id = cb.data.split("_")[2]
+        user_id = cb.from_user.id
+        
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id)) as c:
+                res = await c.fetchone()
+                count = res[0] if res else 0
+
+        # is_owner = True
+        await render_card_message(cb, card_id, count, True, user_id)
+        await cb.answer()
+    except Exception as e:
+        print(e)
+        await cb.answer("Ошибка карты")
+
+# --- ХЕНДЛЕР 2: СМОТРЮ ЧУЖИЕ КАРТЫ (peek_card_OWNERID_CARDID) ---
+@dp.callback_query(F.data.startswith("peek_card_"))
+async def peek_other_card_handler(cb: CallbackQuery):
+    try:
+        # data: peek_card_123456_morgen
+        parts = cb.data.split("_")
+        target_id = int(parts[2])
+        card_id = parts[3]
+        
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (target_id, card_id)) as c:
+                res = await c.fetchone()
+                count = res[0] if res else 0
+
+        # is_owner = False
+        await render_card_message(cb, card_id, count, False, target_id)
+        await cb.answer()
+    except Exception as e:
+        print(e)
+        await cb.answer("Ошибка просмотра")
+
+# --- ХЕНДЛЕР 3: СПИСОК ЧУЖИХ КАРТ (view_collection_TARGETID) ---
+@dp.callback_query(F.data.startswith("view_collection_"))
+async def view_other_collection(cb: CallbackQuery):
+    target_id = int(cb.data.split("_")[2])
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Имя владельца
+        async with db.execute('SELECT username FROM users WHERE user_id = ?', (target_id,)) as c:
+            res = await c.fetchone()
+            owner_name = res[0] if res else "Unknown"
+
+        # Список карт
+        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count > 0', (target_id,)) as c:
+            target_cards = await c.fetchall()
+
+    if not target_cards:
+        await cb.answer(f"У {owner_name} нет карточек.", show_alert=True)
+        return
+
+    text = f"📂 <b>КОЛЛЕКЦИЯ:</b> {owner_name}\n<i>Нажми на карту для просмотра:</i>\n\n"
+    kb_builder = []
+    
+    for card_id, count in target_cards:
+        if card_id not in CARDS: continue
+        card_data = CARDS[card_id]
+        rarity_icon = RARITY_INFO.get(card_data.get("rarity", "common"), RARITY_INFO["common"])["icon"]
+        
+        # ВАЖНО: Используем peek_card, чтобы бот знал, что это ЧУЖАЯ карта
+        btn_text = f"{rarity_icon} {card_data['name']} (x{count})"
+        kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"peek_card_{target_id}_{card_id}")])
+
+    kb_builder.append([InlineKeyboardButton(text="🔙 К профилю", callback_data=f"view_profile_{target_id}")])
+    
+    await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
 
 # --- АДМИН-КОНСОЛЬ ---
 async def admin_console_loop(bot: Bot):
@@ -3255,5 +3326,6 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
