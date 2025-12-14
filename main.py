@@ -241,7 +241,7 @@ class GameMiddleware(BaseMiddleware):
         # Проверка старого меню (только для сообщений)
         valid_buttons = [
             "🥛 Сбор Молока", "💦 Полить грядку", "🏙 Город", "🎡 Развлечения", "👤 Личный Кабинет",
-            "🎅 Сезонный Торговец", "📦 Хранилище", "🏆 Рейтинг", "📟 Терминал", "🔙 Назад",
+            "🎅 Сезонный Торговец", "📦 Хранилище", "🏆 Рейтинг", "📟 Терминал", "⤾ Назад",
             "🎲 Казино", "🎁 Ежедневный бонус", "🥔 Плантация", "🎴 Коллекция", "🎓 Академия", "💲 Торговец", "⚖️ Биржа Игроков"
             "🔄 Обновить данные"
         ]
@@ -738,7 +738,8 @@ async def init_db():
             ("acad_logistics", "INTEGER DEFAULT 0"),
             ("acad_agronomy", "INTEGER DEFAULT 0"),
             ("last_acad_collect", "REAL DEFAULT 0"),
-            ("is_hidden", "INTEGER DEFAULT 0") 
+            ("is_hidden", "INTEGER DEFAULT 0"),
+            ("mutagen", "INTEGER DEFAULT 0")
         ]
         
         for col, definition in new_columns:
@@ -815,8 +816,9 @@ def main_keyboard():
 def town_keyboard():
     kb = [
         [KeyboardButton(text="💲 Торговец"), KeyboardButton(text="📦 Хранилище")],
-        [KeyboardButton(text="🎓 Академия"), KeyboardButton(text="🏆 Рейтинг"), KeyboardButton(text="📟 Терминал")], # <-- ИЗМЕНЕНО
-        [KeyboardButton(text="🔙 Назад")] # <-- Назад на Главное
+        [KeyboardButton(text="🎓 Академия"), KeyboardButton(text="🧬 Лаборатория")], # <--- ДОБАВИЛ ЛАБУ
+        [KeyboardButton(text="🏆 Рейтинг"), KeyboardButton(text="📟 Терминал")], # <--- ДОБАВИЛ СЕЗОН
+        [KeyboardButton(text="⤾ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Район: Город")
     
@@ -826,7 +828,7 @@ def fun_keyboard():
     kb = [
         [KeyboardButton(text="🎲 Казино"), KeyboardButton(text="🎁 Ежедневный бонус")],
         [KeyboardButton(text="🥔 Плантация")], # Ивент
-        [KeyboardButton(text="🔙 Назад")]
+        [KeyboardButton(text="⤾ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Район: Развлечения")
 
@@ -959,20 +961,20 @@ async def milk_handler(message: types.Message):
         new_total = max(0, user['milk'] - lost)
         await update_stat(user_id, "milk", new_total)
         
-        text = f"⚠️ <b>УТЕЧКА:</b> Разлито {lost} Л. Баланс: {format_num(new_total)} Л"
+        text = f"⚠️ Разлито {lost} Л. Баланс: {format_num(new_total)} Л"
     
     elif rand > (1 - drop_chance):
         await update_stat(user_id, "fertilizer", user['fertilizer'] + 1)
         new_total = user['milk'] + base_milk
         await update_stat(user_id, "milk", new_total)
         
-        text = f"🥛 <b>УСПЕХ:</b> {boost_icon}+{base_milk} Л + 🧪 Химия! (Всего: {format_num(new_total)} Л)"
+        text = f"🥛 {boost_icon}+{base_milk} Л + 🧪 Химия!"
     
     else:
         new_total = user['milk'] + base_milk
         await update_stat(user_id, "milk", new_total)
         
-        text = f"🥛 <b>СБОР:</b> {boost_icon}+{base_milk} Л (Всего: {format_num(new_total)} Л)"
+        text = f"🥛 {boost_icon}+{base_milk}"
 
     # Используем функцию "чистого чата"
     await message.answer(text, reply_markup=main_keyboard(), parse_mode="HTML")
@@ -1410,7 +1412,7 @@ async def use_all_fert_confirm(cb: CallbackQuery):
                   f"Конвертировано <b>{fert_count} шт.</b> химии в <b>{total_gain}</b> 🍅."
                   
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 На склад", callback_data="refresh_inv")]
+        [InlineKeyboardButton(text="⤾ На склад", callback_data="refresh_inv")]
     ])
     
     try:
@@ -1430,6 +1432,10 @@ async def show_market_inline(cb: CallbackQuery):
     # Используем существующий хендлер рынка
     await show_market_page(cb, page=0)
     await cb.answer()
+
+@dp.callback_query(F.data == "delete_msg")
+async def delete_msg_handler(cb: CallbackQuery):
+    await cb.message.delete()
 
 # --- АДМИН И ПРОЧЕЕ (без изменений) ---
 @dp.message(F.text == "🏆 Рейтинг")
@@ -1980,7 +1986,7 @@ async def show_cards_list(message: types.Message):
     if not my_cards:
         text = "🎒 <b>Твой альбом с рэперами пуст.</b>\nЗагляни в Лавку Санты!"
         try:
-            await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="refresh_inv")]]), parse_mode="HTML")
+            await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⤾ Назад", callback_data="refresh_inv")]]), parse_mode="HTML")
         except:
             await message.answer(text, parse_mode="HTML")
         return
@@ -2000,7 +2006,7 @@ async def show_cards_list(message: types.Message):
         btn_text = f"{rarity_icon} {card_data['name']} (x{count})"
         kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"view_card_{card_id}")])
 
-    kb_builder.append([InlineKeyboardButton(text="🔙 Назад в Склад", callback_data="refresh_inv")])
+    kb_builder.append([InlineKeyboardButton(text="⤾ Назад в Склад", callback_data="refresh_inv")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_builder)
     
     # Пытаемся отредактировать сообщение, если не выйдет - шлем новое
@@ -2038,7 +2044,7 @@ async def admin_eco_menu(cb: CallbackQuery):
          InlineKeyboardButton(text="🥛 Молоко", callback_data="adm_res_milk")],
         [InlineKeyboardButton(text="🍊 Мандарины", callback_data="adm_res_mandarins"),
          InlineKeyboardButton(text="🧪 Химия", callback_data="adm_res_fertilizer")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back_main")]
+        [InlineKeyboardButton(text="⤾ Назад", callback_data="admin_back_main")]
     ])
     await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
@@ -2050,7 +2056,7 @@ async def admin_users_menu(cb: CallbackQuery):
         [InlineKeyboardButton(text="🚫 БАН / РАЗБАН", callback_data="adm_act_ban")],
         [InlineKeyboardButton(text="🏷 Установить ПРЕФИКС", callback_data="adm_act_prefix")],
         [InlineKeyboardButton(text="🔰 Установить СТАТУС", callback_data="adm_act_status")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back_main")]
+        [InlineKeyboardButton(text="⤾ Назад", callback_data="admin_back_main")]
     ])
     await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
@@ -2079,7 +2085,7 @@ async def admin_select_resource(cb: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="➕ ВЫДАТЬ (Add)", callback_data="adm_op_add"),
          InlineKeyboardButton(text="➖ ЗАБРАТЬ (Remove)", callback_data="adm_op_remove")],
         [InlineKeyboardButton(text="✏️ УСТАНОВИТЬ (Set)", callback_data="adm_op_set")],
-        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_cat_eco")]
+        [InlineKeyboardButton(text="⤾ Отмена", callback_data="admin_cat_eco")]
     ])
     await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
@@ -2265,7 +2271,7 @@ async def view_other_profile(cb: CallbackQuery):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📂 Коллекция игрока", callback_data=f"view_collection_{target_id}")],
-        [InlineKeyboardButton(text="🔙 Назад в топ", callback_data="top_tomatoes")]
+        [InlineKeyboardButton(text="⤾ Назад в топ", callback_data="top_tomatoes")]
     ])
     
     try:
@@ -2404,10 +2410,10 @@ async def get_card_keyboard(current_id, user_id, is_owner, target_id_if_not_owne
     if is_owner:
         # Если это мои карты - кнопка Продать
         kb_rows.append([InlineKeyboardButton(text=f"💰 Продать", callback_data=f"sell_init_{current_id}")])
-        kb_rows.append([InlineKeyboardButton(text="🔙 Назад в Склад", callback_data="refresh_inv")])
+        kb_rows.append([InlineKeyboardButton(text="⤾ Назад в Склад", callback_data="refresh_inv")])
     else:
         # Если чужие - только Назад
-        kb_rows.append([InlineKeyboardButton(text="🔙 К профилю игрока", callback_data=f"view_profile_{target_id_if_not_owner}")])
+        kb_rows.append([InlineKeyboardButton(text="⤾ К профилю игрока", callback_data=f"view_profile_{target_id_if_not_owner}")])
 
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
@@ -2537,7 +2543,7 @@ async def view_other_collection(cb: CallbackQuery):
         btn_text = f"{rarity_icon} {card_data['name']} (x{count})"
         kb_builder.append([InlineKeyboardButton(text=btn_text, callback_data=f"peek_card_{target_id}_{card_id}")])
 
-    kb_builder.append([InlineKeyboardButton(text="🔙 К профилю", callback_data=f"view_profile_{target_id}")])
+    kb_builder.append([InlineKeyboardButton(text="⤾ К профилю", callback_data=f"view_profile_{target_id}")])
     
     await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
 
@@ -3055,11 +3061,146 @@ async def acad_upgrades_menu(cb: CallbackQuery, user_data=None):
                               callback_data=f"acad_buy_log_{price_log}")],
         [InlineKeyboardButton(text=f"🧬 Улучшить ({format_num(price_agr)} 🍅)", 
                               callback_data=f"acad_buy_agr_{price_agr}")],
-        [InlineKeyboardButton(text="🔙 Назад в Холл", callback_data="acad_refresh")]
+        [InlineKeyboardButton(text="⤾ Назад в Холл", callback_data="acad_refresh")]
     ])
     
     # Используем edit_text
     await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+# --- НАСТРОЙКИ КРАФТА ---
+MUTAGEN_SHOP_PRICE = 5000 # Цена мутагена в магазине (помидоры)
+CRAFT_COST_MUTAGEN = 1    # Сколько мутагена нужно на 1 крафт
+CRAFT_CARDS_NEEDED = 3    # Сколько одинаковых карт нужно сжечь для крафта
+
+# --- МЕНЮ ЛАБОРАТОРИИ ---
+@dp.message(F.text == "🧬 Лаборатория") # Добавь эту кнопку в меню Города!
+async def lab_menu(message: types.Message):
+    user_id = message.from_user.id
+    u = await get_user(user_id)
+    
+    text = (
+        f"🧬 <b>ГЕННАЯ ЛАБОРАТОРИЯ</b>\n"
+        f"{UI_SEP}\n"
+        f"🧪 Мутаген: <code>{u['mutagen']}</code> ед.\n\n"
+        f"<b>🔬 СИНТЕЗ КАРТ:</b>\n"
+        f"Вы можете скрестить <b>{CRAFT_CARDS_NEEDED} одинаковые карты</b>,\n"
+        f"добавить <b>{CRAFT_COST_MUTAGEN} мутаген</b> и получить\n"
+        f"<b>1 Случайную карту</b> более высокой редкости.\n"
+        f"{UI_SEP}\n"
+        f"👇 <i>Выберите реагент для синтеза:</i>"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🛒 Купить Мутаген ({format_num(MUTAGEN_SHOP_PRICE)} 🍅)", callback_data="buy_mutagen")],
+        [InlineKeyboardButton(text="⚗️ Начать Синтез", callback_data="start_craft_list")],
+        [InlineKeyboardButton(text="⤾ Выход", callback_data="delete_msg")]
+    ])
+    
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# Покупка мутагена
+@dp.callback_query(F.data == "buy_mutagen")
+async def buy_mutagen_handler(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    u = await get_user(user_id)
+    
+    if u['tomatoes'] >= MUTAGEN_SHOP_PRICE:
+        await update_stat(user_id, "tomatoes", u['tomatoes'] - MUTAGEN_SHOP_PRICE)
+        await update_stat(user_id, "mutagen", u['mutagen'] + 1)
+        await cb.answer("✅ Мутаген куплен!", show_alert=True)
+        # Обновляем текст (грязный хак - просто шлем новое меню лабы)
+        await lab_menu(cb.message)
+        await cb.message.delete()
+    else:
+        await cb.answer("❌ Не хватает помидоров!", show_alert=True)
+
+# Список карт для крафта (показываем только те, которых >= 3)
+@dp.callback_query(F.data == "start_craft_list")
+async def craft_list_handler(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count >= ?', (user_id, CRAFT_CARDS_NEEDED)) as c:
+            candidates = await c.fetchall()
+            
+    if not candidates:
+        await cb.answer(f"❌ Нет карт для синтеза (нужно {CRAFT_CARDS_NEEDED} копии)", show_alert=True)
+        return
+        
+    kb_rows = []
+    for card_id, count in candidates:
+        if card_id not in CARDS: continue
+        card_name = CARDS[card_id]['name']
+        rarity = CARDS[card_id].get('rarity', 'common')
+        
+        # Нельзя крафтить из Limited (максимальная редкость)
+        if rarity == 'limited': continue
+        
+        btn_text = f"{card_name} ({count} шт)"
+        kb_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"do_craft_{card_id}")])
+        
+    kb_rows.append([InlineKeyboardButton(text="⤾ Назад", callback_data="ignore")]) # ignore просто ничего не делает или переписать на возврат
+    
+    await cb.message.edit_text("⚗️ <b>ВЫБОР МАТЕРИАЛА:</b>\nВыберите карту, которую хотите пустить на опыты:", 
+                               reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows), parse_mode="HTML")
+
+# Процесс крафта
+@dp.callback_query(F.data.startswith("do_craft_"))
+async def execute_craft(cb: CallbackQuery):
+    card_id_input = cb.data.split("_")[2]
+    user_id = cb.from_user.id
+    
+    u = await get_user(user_id)
+    
+    # 1. Проверки
+    if u['mutagen'] < CRAFT_COST_MUTAGEN:
+        await cb.answer(f"❌ Нужен {CRAFT_COST_MUTAGEN} мутаген!", show_alert=True)
+        return
+        
+    input_rarity = CARDS[card_id_input].get('rarity', 'common')
+    target_rarity = "rare"
+    if input_rarity == "rare": target_rarity = "epic"
+    elif input_rarity == "epic": target_rarity = "limited"
+    
+    # 2. Выбор результата (Рандомная карта следующей редкости)
+    potential_rewards = [cid for cid, cdata in CARDS.items() if cdata.get('rarity') == target_rarity]
+    
+    if not potential_rewards:
+        await cb.answer("❌ Ошибка: нет карт следующего уровня в базе.", show_alert=True)
+        return
+        
+    reward_card_id = random.choice(potential_rewards)
+    reward_name = CARDS[reward_card_id]['name']
+    
+    # 3. Транзакция
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Списываем карты
+        await db.execute('UPDATE user_cards SET count = count - ? WHERE user_id = ? AND card_id = ?', 
+                         (CRAFT_CARDS_NEEDED, user_id, card_id_input))
+        
+        # Списываем мутаген
+        await db.execute('UPDATE users SET mutagen = mutagen - ? WHERE user_id = ?', (CRAFT_COST_MUTAGEN, user_id))
+        
+        # Выдаем новую карту
+        # Проверка есть ли она уже
+        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id)) as c:
+            exists = await c.fetchone()
+            
+        if exists:
+            await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
+        else:
+            await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (user_id, reward_card_id))
+            
+        await db.commit()
+        
+    # Анимация и результат
+    await cb.message.edit_text("⚗️ <b>СИНТЕЗ...</b>\n🧬 Смешивание ДНК...\n💥 Стабилизация мутации...", parse_mode="HTML")
+    await asyncio.sleep(2)
+    
+    # Показываем новую карту (используем нашу функцию отправки)
+    await cb.message.delete()
+    await cb.message.answer(f"🧪 <b>ЭКСПЕРИМЕНТ УДАЛСЯ!</b>\nПолучена новая карта: <b>{reward_name}</b>", parse_mode="HTML")
+    await send_card_info(cb.message, reward_card_id, 1)
 
 @dp.callback_query(F.data.startswith("acad_buy_"))
 async def buy_course_handler(cb: CallbackQuery):
@@ -3201,7 +3342,7 @@ async def santa_shop_menu(cb: CallbackQuery):
         [InlineKeyboardButton(text="🥛 500 Молока (50 кг 🍊)", callback_data="santa_buy_milk")],
         [InlineKeyboardButton(text="🧪 5 шт. Химии (100 кг 🍊)", callback_data="santa_buy_fert")],
         [InlineKeyboardButton(text="🃏 Карточка (200 кг 🍊)", callback_data="santa_buy_card")],
-        [InlineKeyboardButton(text="🔙 Назад в Склад", callback_data="refresh_inv")]
+        [InlineKeyboardButton(text="⤾ Назад в Склад", callback_data="refresh_inv")]
     ])
     
     await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -3265,16 +3406,16 @@ async def santa_buy_handler(cb: CallbackQuery):
 
 # --- ДОБАВЛЕНИЕ "НАЗАД" ---
 
-@dp.message(F.text == "🔙 Назад (Город)")
+@dp.message(F.text == "⤾ Назад (Город)")
 async def nav_back_to_town(message: types.Message):
     await message.answer("🏡 Вы вернулись на городскую площадь.", reply_markup=town_keyboard())
 
 # --- ОБНОВЛЕНИЕ СТАРЫХ НАВИГАЦИОННЫХ КНОПОК ---
 
-@dp.message(F.text == "🔙 Назад")
+@dp.message(F.text == "⤾ Назад")
 async def nav_back(message: types.Message):
     # Если мы в Городе или Развлечениях, возвращаемся в Main
-    if message.text == "🔙 Назад" and message.reply_to_message and \
+    if message.text == "⤾ Назад" and message.reply_to_message and \
        ("Город" in message.reply_to_message.text or "Развлечения" in message.reply_to_message.text):
         await message.answer("🏡 Вы вернулись на ферму.", reply_markup=main_keyboard())
     else:
@@ -3326,6 +3467,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
