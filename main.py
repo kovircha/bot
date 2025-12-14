@@ -2015,6 +2015,10 @@ async def show_cards_list(message: types.Message):
     except:
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
+@dp.message(F.text == "🎡 Развлечения")
+async def nav_fun(message: types.Message):
+    await message.answer("🎪 Добро пожаловать в парк развлечений!", reply_markup=fun_keyboard())
+
 # --- АДМИН ПАНЕЛЬ (GUI) ---
 
 # 1. Главное меню админки
@@ -3073,7 +3077,7 @@ CRAFT_COST_MUTAGEN = 1    # Сколько мутагена нужно на 1 к
 CRAFT_CARDS_NEEDED = 3    # Сколько одинаковых карт нужно сжечь для крафта
 
 # --- МЕНЮ ЛАБОРАТОРИИ ---
-@dp.message(F.text == "🧬 Лаборатория") # Добавь эту кнопку в меню Города!
+@dp.message(F.text == "🧬 Лаборатория")
 async def lab_menu(message: types.Message):
     user_id = message.from_user.id
     u = await get_user(user_id)
@@ -3108,7 +3112,7 @@ async def buy_mutagen_handler(cb: CallbackQuery):
         await update_stat(user_id, "tomatoes", u['tomatoes'] - MUTAGEN_SHOP_PRICE)
         await update_stat(user_id, "mutagen", u['mutagen'] + 1)
         await cb.answer("✅ Мутаген куплен!", show_alert=True)
-        # Обновляем текст (грязный хак - просто шлем новое меню лабы)
+        # Обновляем текст (шлем новое меню лабы)
         await lab_menu(cb.message)
         await cb.message.delete()
     else:
@@ -3139,7 +3143,7 @@ async def craft_list_handler(cb: CallbackQuery):
         btn_text = f"{card_name} ({count} шт)"
         kb_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"do_craft_{card_id}")])
         
-    kb_rows.append([InlineKeyboardButton(text="⤾ Назад", callback_data="ignore")]) # ignore просто ничего не делает или переписать на возврат
+    kb_rows.append([InlineKeyboardButton(text="⤾ Назад", callback_data="ignore")]) 
     
     await cb.message.edit_text("⚗️ <b>ВЫБОР МАТЕРИАЛА:</b>\nВыберите карту, которую хотите пустить на опыты:", 
                                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows), parse_mode="HTML")
@@ -3467,8 +3471,3 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
-
-
-
-
-
