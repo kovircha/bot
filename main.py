@@ -842,53 +842,55 @@ def fun_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Район: Развлечения")
 
-def upgrades_keyboard(u):
-    # Считаем скидку
+def upgrades_keyboard(u, info_mode=False):
+    # Скидка от Агрономии
     lvl_agr = u['acad_agronomy']
-    discount = min(0.30, lvl_agr * ACAD_DISCOUNT_PER_LVL) # Макс 30%
+    discount = min(0.30, lvl_agr * ACAD_DISCOUNT_PER_LVL)
     price_factor = 1.0 - discount
     
-    # Расчет цен с учетом скидки
-    p_click = int(10 * u['click_level'] * price_factor)
-    p_tomato = int(50 * u['tomato_level'] * price_factor)
-    p_luck = int(30 * (u['luck_level'] + 1) * price_factor)
-    p_safe = int(25 * (u['safety_level'] + 1) * price_factor)
-    p_eco = int(100 * (u['eco_level'] + 1) * price_factor)
-    p_cas = int(40 * (u['casino_level'] + 1) * price_factor)
-    p_gmo = int(75 * (u['gmo_level'] + 1) * price_factor)
+    # --- РАСЧЕТ ЦЕН (Экспоненциальный рост) ---
+    # База * (Множитель ^ Уровень) * Скидка
+    p_click = int(50 * (1.4 ** u['click_level']) * price_factor)
+    p_tomato = int(150 * (1.5 ** u['tomato_level']) * price_factor)
+    p_luck = int(500 * (1.6 ** u['luck_level']) * price_factor)
+    p_safe = int(300 * (1.4 ** u['safety_level']) * price_factor)
+    p_eco = int(1000 * (1.5 ** u['eco_level']) * price_factor)
+    p_cas = int(750 * (1.3 ** u['casino_level']) * price_factor)
+    p_gmo = int(2000 * (1.7 ** u['gmo_level']) * price_factor)
     p_tractor = int(5000 * (1.6 ** u['tractor_level']) * price_factor)
 
-    # Иконка скидки
     d_text = f" 🔥-{int(discount*100)}%" if discount > 0 else ""
+    
+    # Настройка режима
+    if info_mode:
+        icon = "ℹ️"
+        mode_btn_text = "🔙 Вернуться к ПОКУПКЕ"
+        mode_callback = "shop_mode_buy"
+        suffix = "i" # info
+    else:
+        icon = "🛒"
+        mode_btn_text = "❔ Режим: ИНФОРМАЦИЯ"
+        mode_callback = "shop_mode_info"
+        suffix = "b" # buy
 
     kb = [
-        [InlineKeyboardButton(text=f"💪 Бицепс ({p_click}🍅)", callback_data="buy_click"),
-         InlineKeyboardButton(text=f"🧬 Сорт ({p_tomato}🍅)", callback_data="buy_tomato")],
+        [InlineKeyboardButton(text=f"{icon} Бицепс ({format_num(p_click)}🍅)", callback_data=f"buy_click_{suffix}"),
+         InlineKeyboardButton(text=f"{icon} Сорт ({format_num(p_tomato)}🍅)", callback_data=f"buy_tomato_{suffix}")],
         
-        [InlineKeyboardButton(text=f"🍀 Удача ({p_luck}🍅)", callback_data="buy_luck"),
-         InlineKeyboardButton(text=f"🛡 Крышка ({p_safe}🍅)", callback_data="buy_safe")],
+        [InlineKeyboardButton(text=f"{icon} Удача ({format_num(p_luck)}🍅)", callback_data=f"buy_luck_{suffix}"),
+         InlineKeyboardButton(text=f"{icon} Крышка ({format_num(p_safe)}🍅)", callback_data=f"buy_safe_{suffix}")],
          
-        [InlineKeyboardButton(text=f"📉 Насос ({p_eco}🍅)", callback_data="buy_eco"),
-         InlineKeyboardButton(text=f"🃏 Шулер ({p_cas}🍅)", callback_data="buy_cas")],
+        [InlineKeyboardButton(text=f"{icon} Насос ({format_num(p_eco)}🍅)", callback_data=f"buy_eco_{suffix}"),
+         InlineKeyboardButton(text=f"{icon} Шулер ({format_num(p_cas)}🍅)", callback_data=f"buy_cas_{suffix}")],
          
-        [InlineKeyboardButton(text=f"{icon} Трактор ({format_num(p_tractor)}🍅)", callback_data=f"buy_tractor_{m}"),
-        InlineKeyboardButton(text=f"🧪 ГМО ({p_gmo}🍅)", callback_data="buy_gmo")],
+        [InlineKeyboardButton(text=f"{icon} Трактор ({format_num(p_tractor)}🍅)", callback_data=f"buy_tractor_{suffix}")],
+        [InlineKeyboardButton(text=f"{icon} ГМО ({format_num(p_gmo)}🍅)", callback_data=f"buy_gmo_{suffix}")],
+        
+        # КНОПКА ПЕРЕКЛЮЧЕНИЯ РЕЖИМА
+        [InlineKeyboardButton(text=mode_btn_text, callback_data=mode_callback)],
         
         [InlineKeyboardButton(text=f"🔄 Обновить цены{d_text}", callback_data="refresh_upgrades")]
     ]
-    return InlineKeyboardMarkup(inline_keyboard=kb)
-
-def inventory_keyboard(has_fert: int, mandarins: int):
-    kb = []
-    if has_fert > 0:
-        kb.append([InlineKeyboardButton(text=f"🧪 Использовать химию (x{has_fert})", callback_data="use_all_fert_init")])
-    
-    if mandarins > 0:
-        kb.append([InlineKeyboardButton(text=f"🎅 Сезонный торговец({mandarins} кг)", callback_data="santa_shop_open")])
-    
-    kb.append([InlineKeyboardButton(text="🎴 Коллекция", callback_data="show_cards_inline")])
-    kb.append([InlineKeyboardButton(text="⚖️ Биржа Игроков", callback_data="show_market_inline")])
-    kb.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data="refresh_inv")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ---
@@ -1222,91 +1224,120 @@ async def casino_handler(message: types.Message):
     
     await message.answer(res, parse_mode="HTML")
 
-# --- 💲 ТОРГОВЕЦ (МАГАЗИН) ---
+# --- 💲 ТОРГОВЕЦ (МАГАЗИН С РЕЖИМАМИ) ---
+
 @dp.message(F.text == "💲 Торговец")
 async def shop_menu(message: types.Message):
     user = await get_user(message.from_user.id)
-    # Используем твою функцию генерации текста
     text = get_shop_text(user)
-    # info_mode=False (Режим покупки)
+    # По умолчанию открываем в режиме покупки (info_mode=False)
     await message.answer(text, reply_markup=upgrades_keyboard(user, info_mode=False), parse_mode="HTML")
 
+# Переключатель режимов (Инфо / Покупка)
+@dp.callback_query(F.data.startswith("shop_mode_"))
+async def switch_shop_mode(cb: CallbackQuery):
+    mode = cb.data.split("_")[2] # 'info' или 'buy'
+    user = await get_user(cb.from_user.id)
+    
+    is_info = (mode == "info")
+    
+    # Обновляем клавиатуру с новым режимом
+    try:
+        await cb.message.edit_reply_markup(reply_markup=upgrades_keyboard(user, info_mode=is_info))
+    except:
+        pass # Если не изменилось
+    
+    status = "ℹ️ Режим ИНФОРМАЦИИ включен." if is_info else "💳 Режим ПОКУПКИ включен."
+    await cb.answer(status)
+
+# ЕДИНЫЙ ХЕНДЛЕР ПОКУПКИ И ИНФОРМАЦИИ
 @dp.callback_query(F.data.startswith("buy_"))
 async def buy_upgrade(cb: CallbackQuery):
-    type_up = cb.data.split("_")[1] # click, tomato, luck, safe, eco, cas, gmo
-    user = await get_user(cb.from_user.id)
-    tom = user[3]
+    # Разбираем callback: buy_click_b (покупка) ИЛИ buy_click_i (инфо)
+    parts = cb.data.split("_")
+    type_up = parts[1] 
+    mode = parts[2] 
     
+    # === 1. ЕСЛИ РЕЖИМ ИНФОРМАЦИИ (i) ===
+    if mode == "i":
+        descriptions = {
+            "click": "💪 <b>Бицепс</b>\nТренирует руки фермера.\nЭффект: Увеличивает количество молока за один клик.",
+            "tomato": "🧬 <b>Сорт</b>\nГенная инженерия томатов.\nЭффект: Повышает шанс собрать двойной урожай при поливе.",
+            "luck": "🍀 <b>Удача</b>\nЧетырехлистный клевер.\nЭффект: Повышает шанс найти химию при дойке.",
+            "safe": "🛡 <b>Крышка</b>\nГерметичность ведра.\nЭффект: Снижает шанс пролить молоко.",
+            "eco": "📉 <b>Насос</b>\nАвтоматический полив.\nЭффект: Снижает расход молока (воды) для полива.",
+            "cas": "🃏 <b>Шулер</b>\nКарты в рукаве.\nЭффект: Снижает стоимость ставки в казино.",
+            "gmo": "🧪 <b>ГМО</b>\nЭксперименты.\nЭффект: Шанс вернуть 50% потраченного молока при поливе.",
+            "tractor": "🚜 <b>Трактор</b>\nАвтоматический комбайн.\nЭффект: Собирает помидоры, пока вы оффлайн (AFK-фарм)."
+        }
+        # Показываем всплывающее окно (Alert)
+        text = descriptions.get(type_up, "Нет описания.")
+        await cb.answer(text, show_alert=True)
+        return
+
+    # === 2. ЕСЛИ РЕЖИМ ПОКУПКИ (b) ===
+    user = await get_user(cb.from_user.id)
+    tom = user['tomatoes']
+    
+    # Расчет скидки
     lvl_agr = user['acad_agronomy']
     discount = min(0.30, lvl_agr * ACAD_DISCOUNT_PER_LVL)
     price_factor = 1.0 - discount
-    # Определение цены и колонки
-    cost = 0
+    
+    raw_cost = 0
     col = ""
     new_lvl = 0
     
+    # Расчет базовой цены (те же формулы, что в клавиатуре)
     if type_up == "click":
-        base_cost = 10 * user['click_level']
-        col = "click_level"
-        new_lvl = user[4] + 1
+        raw_cost = 50 * (1.4 ** user['click_level'])
+        col = "click_level"; new_lvl = user['click_level'] + 1
     elif type_up == "tomato":
-        cost = 50 * user[5]
-        col = "tomato_level"
-        new_lvl = user[5] + 1
+        raw_cost = 150 * (1.5 ** user['tomato_level'])
+        col = "tomato_level"; new_lvl = user['tomato_level'] + 1
     elif type_up == "luck":
-        cost = 30 * (user[9] + 1)
-        col = "luck_level"
-        new_lvl = user[9] + 1
+        raw_cost = 500 * (1.6 ** user['luck_level'])
+        col = "luck_level"; new_lvl = user['luck_level'] + 1
     elif type_up == "safe":
-        cost = 25 * (user[10] + 1)
-        col = "safety_level"
-        new_lvl = user[10] + 1
+        raw_cost = 300 * (1.4 ** user['safety_level'])
+        col = "safety_level"; new_lvl = user['safety_level'] + 1
     elif type_up == "eco":
-        cost = 100 * (user[11] + 1)
-        col = "eco_level"
-        new_lvl = user[11] + 1
+        raw_cost = 1000 * (1.5 ** user['eco_level'])
+        col = "eco_level"; new_lvl = user['eco_level'] + 1
     elif type_up == "cas":
-        cost = 40 * (user[12] + 1)
-        col = "casino_level"
-        new_lvl = user[12] + 1
+        raw_cost = 750 * (1.3 ** user['casino_level'])
+        col = "casino_level"; new_lvl = user['casino_level'] + 1
     elif type_up == "gmo":
-        cost = 75 * (user[13] + 1)
-        col = "gmo_level"
-        new_lvl = user[13] + 1
+        raw_cost = 2000 * (1.7 ** user['gmo_level'])
+        col = "gmo_level"; new_lvl = user['gmo_level'] + 1
     elif type_up == "tractor":
         raw_cost = 5000 * (1.6 ** user['tractor_level'])
         col = "tractor_level"; new_lvl = user['tractor_level'] + 1
 
+    # Итоговая цена
+    cost = int(raw_cost * price_factor)
+
     if tom >= cost:
         await update_stat(cb.from_user.id, "tomatoes", tom - cost)
         await update_stat(cb.from_user.id, col, new_lvl)
-        await cb.answer(f"✅ Улучшение '{type_up.upper()}' куплено!")
         
-        cost = int(base_cost * price_factor) # Финальная цена
+        # Спец. логика для Трактора (запуск таймера)
+        if type_up == "tractor" and new_lvl == 1:
+            await update_stat(cb.from_user.id, "last_tractor_collect", time.time())
+
+        await cb.answer(f"✅ Улучшение куплено!", show_alert=False)
         
-        # Обновляем меню
-        u = await get_user(cb.from_user.id)
-        try: await cb.message.edit_text(
-            # Редактируем сообщение, используя тот же красивый текст
-                get_shop_text(u), 
-                reply_markup=upgrades_keyboard(u), 
+        # Обновляем меню магазина (остаемся в режиме покупки)
+        u_fresh = await get_user(cb.from_user.id)
+        try: 
+            await cb.message.edit_text(
+                get_shop_text(u_fresh), 
+                reply_markup=upgrades_keyboard(u_fresh, info_mode=False), 
                 parse_mode="HTML"
-        )
+            )
         except: pass
     else:
-        await cb.answer(f"❌ Нужно {cost} помидоров!", show_alert=True)
-
-@dp.callback_query(F.data == "refresh_upgrades")
-async def refresh_shop(cb: CallbackQuery):
-    u = await get_user(cb.from_user.id)
-    try: 
-        await cb.message.edit_text(
-            get_shop_text(u), 
-            reply_markup=upgrades_keyboard(u), 
-            parse_mode="HTML"
-        )
-    except: pass
-    await cb.answer()
+        await cb.answer(f"❌ Не хватает помидоров! Нужно {format_num(cost)}", show_alert=True)
 
 # --- ПРОФИЛЬ (ОБНОВЛЕННЫЙ) ---
 @dp.message(F.text == "👤 Личный Кабинет") 
@@ -2598,6 +2629,116 @@ async def view_other_collection(cb: CallbackQuery):
     
     await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
 
+# --- 🧬 ЛАБОРАТОРИЯ (ВОССТАНОВЛЕНИЕ) ---
+
+@dp.message(F.text == "🧬 Лаборатория")
+async def lab_menu(message: types.Message):
+    user_id = message.from_user.id
+    u = await get_user(user_id)
+    
+    text = (
+        f"🧬 <b>ГЕННАЯ ЛАБОРАТОРИЯ</b>\n"
+        f"{UI_SEP}\n"
+        f"🧪 Мутаген: <code>{u['mutagen']}</code> ед.\n\n"
+        f"<b>🔬 СИНТЕЗ КАРТ:</b>\n"
+        f"Требуется: <b>{CRAFT_CARDS_NEEDED} копии</b> одной карты + <b>{CRAFT_COST_MUTAGEN} мутаген</b>.\n"
+        f"Результат: <b>1 Случайная карта</b> более высокой редкости.\n"
+        f"{UI_SEP}\n"
+        f"👇 <i>Выберите действие:</i>"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🧪 Купить Мутаген ({format_num(MUTAGEN_SHOP_PRICE)} 🍅)", callback_data="buy_mutagen")],
+        [InlineKeyboardButton(text="⚗️ Начать Синтез", callback_data="start_craft_list")],
+        [InlineKeyboardButton(text="🔙 Закрыть", callback_data="delete_msg")]
+    ])
+    
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data == "buy_mutagen")
+async def buy_mutagen_handler(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    u = await get_user(user_id)
+    
+    if u['tomatoes'] >= MUTAGEN_SHOP_PRICE:
+        await update_stat(user_id, "tomatoes", u['tomatoes'] - MUTAGEN_SHOP_PRICE)
+        await update_stat(user_id, "mutagen", u['mutagen'] + 1)
+        await cb.answer("✅ Мутаген приобретен!", show_alert=True)
+        # Обновляем меню (посылаем новое)
+        await lab_menu(cb.message)
+        await cb.message.delete()
+    else:
+        await cb.answer("❌ Недостаточно средств!", show_alert=True)
+
+@dp.callback_query(F.data == "start_craft_list")
+async def craft_list_handler(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count >= ?', (user_id, CRAFT_CARDS_NEEDED)) as c:
+            candidates = await c.fetchall()
+            
+    if not candidates:
+        await cb.answer(f"❌ Нет карт для синтеза (нужно {CRAFT_CARDS_NEEDED} копии)", show_alert=True)
+        return
+        
+    kb_rows = []
+    for card_id, count in candidates:
+        if card_id not in CARDS: continue
+        card_name = CARDS[card_id]['name']
+        rarity = CARDS[card_id].get('rarity', 'common')
+        
+        if rarity == 'limited': continue 
+        
+        btn_text = f"{card_name} ({count} шт)"
+        kb_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"do_craft_{card_id}")])
+        
+    kb_rows.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="delete_msg")])
+    
+    await cb.message.edit_text("⚗️ <b>СЕЛЕКЦИЯ:</b>\nВыберите образец для мутации:", 
+                               reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("do_craft_"))
+async def execute_craft(cb: CallbackQuery):
+    card_id_input = cb.data.split("_")[2]
+    user_id = cb.from_user.id
+    u = await get_user(user_id)
+    
+    if u['mutagen'] < CRAFT_COST_MUTAGEN:
+        await cb.answer(f"❌ Требуется {CRAFT_COST_MUTAGEN} мутаген!", show_alert=True)
+        return
+        
+    input_rarity = CARDS[card_id_input].get('rarity', 'common')
+    
+    target_rarity = "rare"
+    if input_rarity == "rare": target_rarity = "epic"
+    elif input_rarity == "epic": target_rarity = "limited"
+    
+    potential_rewards = [cid for cid, cdata in CARDS.items() if cdata.get('rarity') == target_rarity]
+    
+    if not potential_rewards:
+        await cb.answer("❌ Ошибка базы (нет карт).", show_alert=True)
+        return
+        
+    reward_card_id = random.choice(potential_rewards)
+    reward_name = CARDS[reward_card_id]['name']
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Списываем
+        await db.execute('UPDATE user_cards SET count = count - ? WHERE user_id = ? AND card_id = ?', (CRAFT_CARDS_NEEDED, user_id, card_id_input))
+        await db.execute('UPDATE users SET mutagen = mutagen - ? WHERE user_id = ?', (CRAFT_COST_MUTAGEN, user_id))
+        
+        # Начисляем
+        exists = await db.execute_fetchall('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
+        if exists:
+            await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
+        else:
+            await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (user_id, reward_card_id))
+        await db.commit()
+        
+    await cb.message.edit_text(f"🧬 <b>СИНТЕЗ ЗАВЕРШЕН!</b>\nПолучена карта: {reward_name}", parse_mode="HTML")
+    await send_card_info(cb.message, reward_card_id, 1)
+
 # --- АДМИН-КОНСОЛЬ ---
 async def admin_console_loop(bot: Bot):
     global CONSOLE_LOGS, MAINTENANCE_MODE
@@ -3123,116 +3264,6 @@ MUTAGEN_SHOP_PRICE = 5000 # Цена мутагена в магазине (по�
 CRAFT_COST_MUTAGEN = 1    # Сколько мутагена нужно на 1 крафт
 CRAFT_CARDS_NEEDED = 3    # Сколько одинаковых карт нужно сжечь для крафта
 
-# --- 🧬 ЛАБОРАТОРИЯ ---
-@dp.message(F.text == "🧬 Лаборатория")
-async def lab_menu(message: types.Message):
-    user_id = message.from_user.id
-    u = await get_user(user_id)
-    
-    text = (
-        f"🧬 <b>ГЕННАЯ ЛАБОРАТОРИЯ</b>\n"
-        f"{UI_SEP}\n"
-        f"🧪 Мутаген: <code>{u['mutagen']}</code> ед.\n\n"
-        f"<b>🔬 СИНТЕЗ КАРТ:</b>\n"
-        f"Требуется: <b>{CRAFT_CARDS_NEEDED} копии</b> одной карты + <b>{CRAFT_COST_MUTAGEN} мутаген</b>.\n"
-        f"Результат: <b>1 Случайная карта</b> более высокой редкости.\n"
-        f"{UI_SEP}\n"
-        f"👇 <i>Выберите действие:</i>"
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🧪 Купить Мутаген ({format_num(MUTAGEN_SHOP_PRICE)} 🍅)", callback_data="buy_mutagen")],
-        [InlineKeyboardButton(text="⚗️ Начать Синтез", callback_data="start_craft_list")],
-        [InlineKeyboardButton(text="🔙 Закрыть", callback_data="delete_msg")]
-    ])
-    
-    await message.answer(text, reply_markup=kb, parse_mode="HTML")
-
-@dp.callback_query(F.data == "buy_mutagen")
-async def buy_mutagen_handler(cb: CallbackQuery):
-    user_id = cb.from_user.id
-    u = await get_user(user_id)
-    
-    if u['tomatoes'] >= MUTAGEN_SHOP_PRICE:
-        await update_stat(user_id, "tomatoes", u['tomatoes'] - MUTAGEN_SHOP_PRICE)
-        await update_stat(user_id, "mutagen", u['mutagen'] + 1)
-        await cb.answer("✅ Мутаген приобретен!", show_alert=True)
-        await lab_menu(cb.message) # Обновляем меню
-        await cb.message.delete()
-    else:
-        await cb.answer("❌ Недостаточно средств!", show_alert=True)
-
-@dp.callback_query(F.data == "start_craft_list")
-async def craft_list_handler(cb: CallbackQuery):
-    user_id = cb.from_user.id
-    
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT card_id, count FROM user_cards WHERE user_id = ? AND count >= ?', (user_id, CRAFT_CARDS_NEEDED)) as c:
-            candidates = await c.fetchall()
-            
-    if not candidates:
-        await cb.answer(f"❌ Нет подходящих карт (нужно {CRAFT_CARDS_NEEDED} копии)", show_alert=True)
-        return
-        
-    kb_rows = []
-    for card_id, count in candidates:
-        if card_id not in CARDS: continue
-        card_name = CARDS[card_id]['name']
-        rarity = CARDS[card_id].get('rarity', 'common')
-        
-        if rarity == 'limited': continue 
-        
-        btn_text = f"{card_name} ({count} шт)"
-        kb_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"do_craft_{card_id}")])
-        
-    kb_rows.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="delete_msg")])
-    
-    await cb.message.edit_text("⚗️ <b>СЕЛЕКЦИЯ:</b>\nВыберите образец для мутации:", 
-                               reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows), parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("do_craft_"))
-async def execute_craft(cb: CallbackQuery):
-    card_id_input = cb.data.split("_")[2]
-    user_id = cb.from_user.id
-    u = await get_user(user_id)
-    
-    if u['mutagen'] < CRAFT_COST_MUTAGEN:
-        await cb.answer(f"❌ Требуется {CRAFT_COST_MUTAGEN} мутаген!", show_alert=True)
-        return
-        
-    input_rarity = CARDS[card_id_input].get('rarity', 'common')
-    
-    # Логика повышения редкости
-    target_rarity = "rare"
-    if input_rarity == "rare": target_rarity = "epic"
-    elif input_rarity == "epic": target_rarity = "limited"
-    
-    potential_rewards = [cid for cid, cdata in CARDS.items() if cdata.get('rarity') == target_rarity]
-    
-    if not potential_rewards:
-        await cb.answer("❌ Ошибка базы (нет карт такой редкости).", show_alert=True)
-        return
-        
-    reward_card_id = random.choice(potential_rewards)
-    reward_name = CARDS[reward_card_id]['name']
-    
-    async with aiosqlite.connect(DB_NAME) as db:
-        # Списываем
-        await db.execute('UPDATE user_cards SET count = count - ? WHERE user_id = ? AND card_id = ?', (CRAFT_CARDS_NEEDED, user_id, card_id_input))
-        await db.execute('UPDATE users SET mutagen = mutagen - ? WHERE user_id = ?', (CRAFT_COST_MUTAGEN, user_id))
-        
-        # Начисляем новую
-        exists = await db.execute_fetchall('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
-        if exists:
-            await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
-        else:
-            await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (user_id, reward_card_id))
-        await db.commit()
-        
-    await cb.message.edit_text(f"🧬 <b>СИНТЕЗ УСПЕШЕН!</b>\nПолучена карта: {reward_name}", parse_mode="HTML")
-    # Показываем карту
-    await send_card_info(cb.message, reward_card_id, 1)
-
 @dp.callback_query(F.data.startswith("acad_buy_"))
 async def buy_course_handler(cb: CallbackQuery):
     # Разбор данных: acad_buy_man_1000
@@ -3498,7 +3529,3 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
-
-
-
-
