@@ -98,6 +98,15 @@ RARITY_INFO = {
     }
 }
 
+# Для ресурсов (Помидоры, Молоко)
+class AdminEcoStates(StatesGroup):
+    waiting_for_user_id = State()
+    waiting_for_amount = State()
+
+class AdminCardStates(StatesGroup):
+    waiting_for_card_id = State()
+    waiting_for_target = State()
+    
 class AdminPanelStates(StatesGroup):
     waiting_for_user_id = State() # Ждем ID игрока
     waiting_for_value = State()   # Ждем число или текст
@@ -118,7 +127,6 @@ class PlotStates(StatesGroup):
     waiting_for_plot_id = State() 
     waiting_for_plot_confirm = State() # <-- НОВЫЙ STATE  
 
-# --- MIDDLEWARE ---
 # --- MIDDLEWARE (ОБНОВЛЕННЫЙ) ---
 class GameMiddleware(BaseMiddleware):
     async def __call__(self, handler, event: Message, data: dict):
@@ -1214,16 +1222,13 @@ async def casino_handler(message: types.Message):
     
     await message.answer(res, parse_mode="HTML")
 
-# --- ХЕНДЛЕР ТОРГОВЦА (МАГАЗИН) ---
+# --- 💲 ТОРГОВЕЦ (МАГАЗИН) ---
 @dp.message(F.text == "💲 Торговец")
 async def shop_menu(message: types.Message):
     user = await get_user(message.from_user.id)
-    
-    # Текст магазина (используем твою функцию get_shop_text)
+    # Используем твою функцию генерации текста
     text = get_shop_text(user)
-    
-    # Отправляем с клавиатурой улучшений
-    # info_mode=False значит режим покупки по умолчанию
+    # info_mode=False (Режим покупки)
     await message.answer(text, reply_markup=upgrades_keyboard(user, info_mode=False), parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("buy_"))
@@ -2055,7 +2060,7 @@ async def show_cards_list(message: types.Message):
 async def nav_fun(message: types.Message):
     await message.answer("🎪 Добро пожаловать в парк развлечений!", reply_markup=fun_keyboard())
 
-# --- АДМИН ПАНЕЛЬ (GUI v2.0) ---
+# --- НОВАЯ АДМИН ПАНЕЛЬ ---
 
 @dp.message(Command("admin"))
 async def admin_panel_start(message: types.Message, state: FSMContext):
@@ -2066,7 +2071,6 @@ async def admin_panel_start(message: types.Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Ресурсы (Give/Set)", callback_data="admin_cat_eco")],
         [InlineKeyboardButton(text="🃏 Карточки (Give/Take)", callback_data="admin_cat_cards")],
-        [InlineKeyboardButton(text="👤 Игроки (Ban/Prefix)", callback_data="admin_cat_users")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
     try: await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -2081,10 +2085,12 @@ async def admin_close_handler(cb: CallbackQuery, state: FSMContext):
 async def admin_back(cb: CallbackQuery, state: FSMContext):
     await admin_panel_start(cb.message, state)
 
-# --- 1. КАТЕГОРИЯ: КАРТОЧКИ ---
+# ================================
+# ЛОГИКА КАРТОЧЕК (AdminCardStates)
+# ================================
 @dp.callback_query(F.data == "admin_cat_cards")
 async def admin_cards_menu(cb: CallbackQuery):
-    text = "🃏 <b>УПРАВЛЕНИЕ КАРТАМИ</b>\nЧто делаем?"
+    text = "🃏 <b>УПРАВЛЕНИЕ КАРТАМИ</b>"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ ВЫДАТЬ Карту", callback_data="adm_card_op_give")],
         [InlineKeyboardButton(text="➖ ЗАБРАТЬ Карту", callback_data="adm_card_op_take")],
@@ -2094,38 +2100,19 @@ async def admin_cards_menu(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("adm_card_op_"))
 async def admin_card_op_select(cb: CallbackQuery, state: FSMContext):
-    op = cb.data.split("_")[3] # give / take
+    op = cb.data.split("_")[3]
     await state.update_data(op=op)
-    
-    await cb.message.edit_text("✍️ <b>Введите ID КАРТЫ:</b>\n(Например: morgen, 52, tyler...)", parse_mode="HTML")
-    await state.set_state(AdminPanelStates.waiting_for_value) # Используем waiting_for_value временно для ID карты
-
-# Хендлер для ввода ID карты (перехватываем тут, чтобы не путать с ресурсами)
-# ВАЖНО: Нам нужно разделить логику ввода. Создадим отдельный State для карт.
-class AdminCardStates(StatesGroup):
-    waiting_for_card_id = State()
-    waiting_for_target = State()
-
-# 2. Хендлер выбора действия (Выдать/Забрать)
-@dp.callback_query(F.data.startswith("adm_card_op_"))
-async def admin_card_op_select_fixed(cb: CallbackQuery, state: FSMContext):
-    op = cb.data.split("_")[3] # give / take
-    await state.update_data(op=op)
-    
-    await cb.message.edit_text("✍️ <b>Введите ID КАРТЫ:</b>\n(Например: <code>morgen</code>, <code>52</code>...)", parse_mode="HTML")
-    # ВАЖНО: Переключаем в состояние ожидания КАРТЫ
+    # Переходим в состояние КАРТЫ (ждет текст)
     await state.set_state(AdminCardStates.waiting_for_card_id)
+    await cb.message.edit_text("✍️ <b>Введите ID КАРТЫ</b> (текстом):\nПример: <code>morgen</code>, <code>52</code>...", parse_mode="HTML")
 
-# 3. Хендлер ввода ID Карты (ТУТ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО)
 @dp.message(StateFilter(AdminCardStates.waiting_for_card_id))
-async def admin_card_get_card_id(message: types.Message, state: FSMContext):
-    # ТУТ НЕ НУЖЕН int(), так как ID карты - это текст!
-    card_id = message.text.strip() 
-    
+async def admin_card_get_id(message: types.Message, state: FSMContext):
+    card_id = message.text.strip()
     if card_id not in CARDS:
-        await message.answer(f"❌ Карты с ID <code>{card_id}</code> не существует.\nПопробуйте еще раз или проверьте cards.json", parse_mode="HTML")
+        await message.answer("❌ Такой карты нет в базе.")
         return
-        
+    
     await state.update_data(card_id=card_id)
     
     # Кнопка для выдачи ВСЕМ
@@ -2133,54 +2120,43 @@ async def admin_card_get_card_id(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text="👥 ВЫДАТЬ ВСЕМ", callback_data="adm_target_all_cards")]
     ])
     
-    card_name = CARDS[card_id]['name']
-    await message.answer(f"✅ Выбрана карта: <b>{card_name}</b>\nТеперь введите <b>ID ИГРОКА</b> (число) или нажмите кнопку:", reply_markup=kb, parse_mode="HTML")
-    # Переходим в ожидание ЦЕЛИ (Игрока)
+    await message.answer(f"✅ Карта: <b>{CARDS[card_id]['name']}</b>\nТеперь введите <b>ID ИГРОКА</b> (число) или нажмите кнопку:", reply_markup=kb, parse_mode="HTML")
     await state.set_state(AdminCardStates.waiting_for_target)
 
-# 4. Хендлер кнопки "ВСЕМ" для карт
+# Выдача ВСЕМ (Карты)
 @dp.callback_query(F.data == "adm_target_all_cards", StateFilter(AdminCardStates.waiting_for_target))
 async def admin_card_target_all(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    op = data['op']
     card_id = data['card_id']
+    op = data['op']
     
     if op == "take":
-        await cb.answer("❌ Забирать у всех нельзя.", show_alert=True)
-        return
+        await cb.answer("❌ Нельзя забрать у всех сразу.", show_alert=True); return
 
-    await cb.message.edit_text("🚀 <b>Выдача карт всем игрокам...</b>", parse_mode="HTML")
+    await cb.message.edit_text("🚀 <b>Выдача карт всем...</b>", parse_mode="HTML")
     
     async with aiosqlite.connect(DB_NAME) as db:
-        # Получаем всех юзеров
-        async with db.execute('SELECT user_id FROM users') as cursor:
-            users = await cursor.fetchall()
-        
+        users = await db.execute_fetchall('SELECT user_id FROM users')
         count = 0
-        for row in users:
-            uid = row[0]
-            # Проверяем, есть ли уже
-            async with db.execute('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (uid, card_id)) as c:
-                exists = await c.fetchone()
-            
+        for (uid,) in users:
+            exists = await db.execute_fetchall('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (uid, card_id))
             if exists:
                 await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (uid, card_id))
             else:
                 await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (uid, card_id))
             count += 1
-            
         await db.commit()
         
-    await cb.message.edit_text(f"✅ Карта <b>{card_id}</b> выдана <b>{count}</b> игрокам!", parse_mode="HTML")
+    await cb.message.edit_text(f"✅ Карта <b>{card_id}</b> выдана {count} игрокам!", parse_mode="HTML")
     await state.clear()
 
-# 5. Хендлер ввода ID Игрока (для карт)
+# Выдача ОДНОМУ (Карты)
 @dp.message(StateFilter(AdminCardStates.waiting_for_target))
 async def admin_card_target_single(message: types.Message, state: FSMContext):
     try:
-        target_id = int(message.text) # Вот тут нужен int, так как это ID игрока
+        target_id = int(message.text)
     except:
-        await message.answer("❌ ID игрока должен быть числом.")
+        await message.answer("❌ ID игрока должен быть числом!")
         return
         
     data = await state.get_data()
@@ -2189,25 +2165,24 @@ async def admin_card_target_single(message: types.Message, state: FSMContext):
     
     async with aiosqlite.connect(DB_NAME) as db:
         if op == "give":
-            async with db.execute('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (target_id, card_id)) as c:
-                exists = await c.fetchone()
-            
+            exists = await db.execute_fetchall('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (target_id, card_id))
             if exists:
                 await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (target_id, card_id))
             else:
                 await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (target_id, card_id))
-            res_text = "выдана"
-            
-        elif op == "take":
+            action = "выдана"
+        else:
             await db.execute('DELETE FROM user_cards WHERE user_id = ? AND card_id = ?', (target_id, card_id))
-            res_text = "забрана (все копии)"
-            
+            action = "забрана"
         await db.commit()
         
-    await message.answer(f"✅ Карта <b>{card_id}</b> успешно {res_text} у игрока <code>{target_id}</code>.", parse_mode="HTML")
+    await message.answer(f"✅ Карта <b>{card_id}</b> {action} у ID {target_id}.", parse_mode="HTML")
     await state.clear()
 
-# --- 2. КАТЕГОРИЯ: РЕСУРСЫ (Обновленная с кнопкой ВСЕМ) ---
+
+# ================================
+# ЛОГИКА РЕСУРСОВ (AdminEcoStates)
+# ================================
 @dp.callback_query(F.data == "admin_cat_eco")
 async def admin_eco_menu(cb: CallbackQuery):
     text = "💰 <b>УПРАВЛЕНИЕ РЕСУРСАМИ</b>"
@@ -2231,133 +2206,67 @@ async def admin_select_resource(cb: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="✏️ УСТАНОВИТЬ", callback_data="adm_op_set")],
         [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_cat_eco")]
     ])
-    await cb.message.edit_text(f"⚙️ Ресурс: <b>{res.upper()}</b>. Выберите действие:", reply_markup=kb, parse_mode="HTML")
+    await cb.message.edit_text(f"⚙️ Ресурс: <b>{res.upper()}</b>. Действие:", reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("adm_op_"))
 async def admin_select_op(cb: CallbackQuery, state: FSMContext):
     op = cb.data.split("_")[2]
     await state.update_data(op=op)
     
-    # Кнопка для действия над ВСЕМИ (только для выдачи/забора)
     kb = None
     if op in ["add", "remove"]:
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👥 ПРИМЕНИТЬ КО ВСЕМ", callback_data="adm_target_all_res")]])
     
+    # Переходим в состояние ЭКОНОМИКИ (ждет ID)
+    await state.set_state(AdminEcoStates.waiting_for_user_id)
     await cb.message.edit_text("✍️ <b>Введите ID ИГРОКА</b> или нажмите кнопку:", reply_markup=kb, parse_mode="HTML")
-    await state.set_state(AdminPanelStates.waiting_for_user_id)
 
-@dp.callback_query(F.data == "adm_target_all_res", StateFilter(AdminPanelStates.waiting_for_user_id))
+# Кнопка ВСЕМ (Ресурсы)
+@dp.callback_query(F.data == "adm_target_all_res", StateFilter(AdminEcoStates.waiting_for_user_id))
 async def admin_res_all(cb: CallbackQuery, state: FSMContext):
     await state.update_data(target_user_id="ALL")
+    await state.set_state(AdminEcoStates.waiting_for_amount)
     await cb.message.edit_text("✍️ <b>Введите КОЛИЧЕСТВО</b> для всех:", parse_mode="HTML")
-    await state.set_state(AdminPanelStates.waiting_for_value)
 
-# Хендлер ввода ID (оставляем старый, но добавляем обработку "ALL" в следующем шаге)
-# ... (остальной код админки для ввода значений аналогичен тому, что я давал раньше,
-# только добавь проверку if target_id == "ALL" в финальном шаге)
-
-# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 3: Получение ID) ---
-@dp.message(StateFilter(AdminPanelStates.waiting_for_user_id))
-async def admin_get_id(message: types.Message, state: FSMContext):
+# Ввод ID вручную (Ресурсы)
+@dp.message(StateFilter(AdminEcoStates.waiting_for_user_id))
+async def admin_res_get_id(message: types.Message, state: FSMContext):
     try:
         user_id = int(message.text)
+        await state.update_data(target_user_id=user_id)
+        await state.set_state(AdminEcoStates.waiting_for_amount)
+        await message.answer("✍️ <b>Введите КОЛИЧЕСТВО:</b>", parse_mode="HTML")
     except:
-        await message.answer("❌ ID должен быть числом. Попробуй еще раз.")
-        return
+        await message.answer("❌ ID должен быть числом.")
 
-    # Проверяем, есть ли такой юзер в базе
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT 1 FROM users WHERE user_id = ?', (user_id,)) as c:
-            if not await c.fetchone():
-                await message.answer("❌ Игрок не найден в базе.")
-                return
-
-    # Сохраняем ID и переходим к вводу числа
-    await state.update_data(target_user_id=user_id)
-    await message.answer("✍️ <b>Введите ЗНАЧЕНИЕ (количество):</b>", parse_mode="HTML")
-    await state.set_state(AdminPanelStates.waiting_for_value)
-
-# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 4: Исполнение БАНА) ---
-@dp.callback_query(F.data.startswith("adm_ban_do_"))
-async def admin_exec_ban(cb: CallbackQuery):
-    val = int(cb.data.split("_")[3]) # 1 или 0
-    # Нам нужен ID из контекста, но мы сбросили стейт. 
-    # Это проблема архитектуры. Упростим: перенесем ID в текст сообщения или запросим заново.
-    # ЛУЧШЕЕ РЕШЕНИЕ: При нажатии кнопки бана, передать ID в callback_data, но он может быть длинным.
-    # Давай сделаем проще: Бан через команду /ban ID в консоли, а тут просто в value напишем 1 или 0.
-    # Но раз мы уже тут: вернемся в стейт value.
-    await cb.answer("Эта функция пока только через ввод 1 (бан) или 0 (разбан) в следующем шаге.")
-
-# --- ЛОГИКА ДЕЙСТВИЙ (ШАГ 4: Получение ЗНАЧЕНИЯ и Исполнение) ---
-# --- ФИНАЛЬНОЕ ИСПОЛНЕНИЕ (ВЫДАЧА/ЗАБОР) ---
-@dp.message(StateFilter(AdminPanelStates.waiting_for_value))
-async def admin_exec_final(message: types.Message, state: FSMContext):
-    value_raw = message.text
-    data = await state.get_data()
-    
-    # Получаем данные из памяти
-    target_id = data.get('target_user_id') # Тут будет int ID или строка "ALL"
-    res = data.get('res')                  # tomatoes, milk...
-    op = data.get('op')                    # add, remove, set
-    
-    # Проверка на число
+# Финал (Ресурсы)
+@dp.message(StateFilter(AdminEcoStates.waiting_for_amount))
+async def admin_res_final(message: types.Message, state: FSMContext):
     try:
-        amount = int(value_raw)
+        amount = int(message.text)
     except:
-        await message.answer("❌ Введите целое число.")
+        await message.answer("❌ Введите число.")
         return
-
-    async with aiosqlite.connect(DB_NAME) as db:
         
-        # === ВЕТКА 1: ДЕЙСТВИЕ ДЛЯ ВСЕХ ===
-        if target_id == "ALL":
-            if op == "add":
-                # Массовая выдача
-                await db.execute(f'UPDATE users SET {res} = {res} + ?', (amount,))
-                action_text = "выдано всем"
-            elif op == "remove":
-                # Массовый забор (не уходим в минус)
-                await db.execute(f'UPDATE users SET {res} = MAX(0, {res} - ?)', (amount,))
-                action_text = "забрано у всех"
-            elif op == "set":
-                # Установить всем (опасно, но добавим)
-                await db.execute(f'UPDATE users SET {res} = ?', (amount,))
-                action_text = "установлено всем"
-            
-            # Узнаем сколько строк затронуто (чисто для инфо)
-            async with db.execute('SELECT count(*) FROM users') as c:
-                count = (await c.fetchone())[0]
-            
+    data = await state.get_data()
+    target = data['target_user_id']
+    res = data['res']
+    op = data['op']
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        if target == "ALL":
+            if op == "add": await db.execute(f'UPDATE users SET {res} = {res} + ?', (amount,))
+            elif op == "remove": await db.execute(f'UPDATE users SET {res} = MAX(0, {res} - ?)', (amount,))
             await db.commit()
-            await message.answer(f"✅ Успешно! <b>{amount} {res}</b> {action_text} ({count} игроков).", parse_mode="HTML")
-
-        # === ВЕТКА 2: ДЕЙСТВИЕ ДЛЯ ОДНОГО ===
+            await message.answer(f"✅ <b>{op.upper()} {amount} {res}</b> выполнено для ВСЕХ.", parse_mode="HTML")
         else:
-            # Получаем текущее значение
-            async with db.execute(f'SELECT {res} FROM users WHERE user_id = ?', (target_id,)) as c:
-                row = await c.fetchone()
-                current = row[0] if row else 0
-            
-            # Считаем новое
-            new_val = current
-            if op == "add": new_val += amount
-            elif op == "remove": new_val -= amount
-            elif op == "set": new_val = amount
-            
-            # Не уходим в минус
-            new_val = max(0, new_val)
-            
-            await db.execute(f'UPDATE users SET {res} = ? WHERE user_id = ?', (new_val, target_id))
+            # Одиночное действие
+            if op == "add": await db.execute(f'UPDATE users SET {res} = {res} + ? WHERE user_id = ?', (amount, target))
+            elif op == "remove": await db.execute(f'UPDATE users SET {res} = MAX(0, {res} - ?) WHERE user_id = ?', (amount, target))
+            elif op == "set": await db.execute(f'UPDATE users SET {res} = ? WHERE user_id = ?', (amount, target))
             await db.commit()
-            
-            await message.answer(
-                f"✅ Игрок: <code>{target_id}</code>\n"
-                f"⚙️ Операция: {op} {amount} {res}\n"
-                f"📊 Было: {format_num(current)} -> Стало: {format_num(new_val)}",
-                parse_mode="HTML"
-            )
-
-    # Очищаем состояние (выходим из меню админки)
+            await message.answer(f"✅ Успешно для ID {target}.", parse_mode="HTML")
+    
     await state.clear()
 
 # --- ХЕНДЛЕР ПРОСМОТРА КАРТЫ (ИСПРАВЛЕННЫЙ) ---
@@ -3214,8 +3123,7 @@ MUTAGEN_SHOP_PRICE = 5000 # Цена мутагена в магазине (по�
 CRAFT_COST_MUTAGEN = 1    # Сколько мутагена нужно на 1 крафт
 CRAFT_CARDS_NEEDED = 3    # Сколько одинаковых карт нужно сжечь для крафта
 
-# --- 🧬 ЛАБОРАТОРИЯ (FIX) ---
-
+# --- 🧬 ЛАБОРАТОРИЯ ---
 @dp.message(F.text == "🧬 Лаборатория")
 async def lab_menu(message: types.Message):
     user_id = message.from_user.id
@@ -3249,8 +3157,7 @@ async def buy_mutagen_handler(cb: CallbackQuery):
         await update_stat(user_id, "tomatoes", u['tomatoes'] - MUTAGEN_SHOP_PRICE)
         await update_stat(user_id, "mutagen", u['mutagen'] + 1)
         await cb.answer("✅ Мутаген приобретен!", show_alert=True)
-        # Обновляем меню
-        await lab_menu(cb.message)
+        await lab_menu(cb.message) # Обновляем меню
         await cb.message.delete()
     else:
         await cb.answer("❌ Недостаточно средств!", show_alert=True)
@@ -3273,7 +3180,7 @@ async def craft_list_handler(cb: CallbackQuery):
         card_name = CARDS[card_id]['name']
         rarity = CARDS[card_id].get('rarity', 'common')
         
-        if rarity == 'limited': continue # Нельзя крафтить из максимальной
+        if rarity == 'limited': continue 
         
         btn_text = f"{card_name} ({count} шт)"
         kb_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"do_craft_{card_id}")])
@@ -3294,6 +3201,8 @@ async def execute_craft(cb: CallbackQuery):
         return
         
     input_rarity = CARDS[card_id_input].get('rarity', 'common')
+    
+    # Логика повышения редкости
     target_rarity = "rare"
     if input_rarity == "rare": target_rarity = "epic"
     elif input_rarity == "epic": target_rarity = "limited"
@@ -3301,27 +3210,27 @@ async def execute_craft(cb: CallbackQuery):
     potential_rewards = [cid for cid, cdata in CARDS.items() if cdata.get('rarity') == target_rarity]
     
     if not potential_rewards:
-        await cb.answer("❌ Ошибка базы данных (нет карт).", show_alert=True)
+        await cb.answer("❌ Ошибка базы (нет карт такой редкости).", show_alert=True)
         return
         
     reward_card_id = random.choice(potential_rewards)
+    reward_name = CARDS[reward_card_id]['name']
     
     async with aiosqlite.connect(DB_NAME) as db:
-        # Списываем ресурсы
+        # Списываем
         await db.execute('UPDATE user_cards SET count = count - ? WHERE user_id = ? AND card_id = ?', (CRAFT_CARDS_NEEDED, user_id, card_id_input))
         await db.execute('UPDATE users SET mutagen = mutagen - ? WHERE user_id = ?', (CRAFT_COST_MUTAGEN, user_id))
         
-        # Выдаем награду
-        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id)) as c:
-            exists = await c.fetchone()
-        
+        # Начисляем новую
+        exists = await db.execute_fetchall('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
         if exists:
             await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
         else:
             await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (user_id, reward_card_id))
         await db.commit()
         
-    await cb.message.edit_text("🧬 <b>СИНТЕЗ ЗАВЕРШЕН!</b>", parse_mode="HTML")
+    await cb.message.edit_text(f"🧬 <b>СИНТЕЗ УСПЕШЕН!</b>\nПолучена карта: {reward_name}", parse_mode="HTML")
+    # Показываем карту
     await send_card_info(cb.message, reward_card_id, 1)
 
 @dp.callback_query(F.data.startswith("acad_buy_"))
