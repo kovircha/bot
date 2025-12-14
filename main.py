@@ -476,26 +476,24 @@ async def get_market_page(page: int = 0):
     return lot, total_lots
 
 async def show_market_page(message_or_call, page=0):
-    # 1. Сначала получаем данные
+    # 1. Получаем данные
     lot, total = await get_market_page(page)
     
-    # 2. Если лотов нет - выводим сообщение и выходим
+    # 2. Если пусто
     if not lot:
         text = "⚖️ <b>ТОРГОВАЯ БИРЖА:</b> Лотов нет\nРазместите актив первым."
+        kb = None
         if isinstance(message_or_call, CallbackQuery):
             await message_or_call.message.edit_text(text, parse_mode="HTML")
         else:
             await message_or_call.answer(text, parse_mode="HTML")
         return
 
-    # 3. Если лоты есть - распаковываем данные
+    # 3. Распаковка
     lot_id, seller, card_id, price, seller_id = lot
     card_info = CARDS.get(card_id, {"name": "Неизвестный актив", "rarity": "common"})
     
-    # 4. Формируем красивый текст (Премиум дизайн)
     rarity_data = RARITY_INFO.get(card_info.get("rarity", "common"), RARITY_INFO["common"])
-    # Используем цвет в HTML теге font (телеграм это поддерживает)
-    # Внутри show_market_page
     rarity_text = f"<b>{rarity_data['name']}</b>"
     
     text = (
@@ -508,11 +506,10 @@ async def show_market_page(message_or_call, page=0):
         f"💰 <b>СТОИМОСТЬ:</b> <code>{format_num(price)}</code> 🍅\n"
     )
 
-    # 5. Формируем кнопки
+    # 4. Кнопки
     buttons = []
     user_id = message_or_call.from_user.id
     
-    # Кнопка действия (Купить или Удалить свой лот)
     if user_id == seller_id:
         buy_btn = InlineKeyboardButton(text="🗑 Удалить лот", callback_data=f"market_delete_{lot_id}")
     else:
@@ -520,7 +517,6 @@ async def show_market_page(message_or_call, page=0):
     
     buttons.append([buy_btn])
     
-    # Кнопки навигации (Влево / Вправо)
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"market_page_{page-1}"))
@@ -535,50 +531,7 @@ async def show_market_page(message_or_call, page=0):
 
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     
-    # 6. Отправляем или редактируем сообщение
-    if isinstance(message_or_call, CallbackQuery):
-        await message_or_call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    else:
-        await message_or_call.answer(text, reply_markup=kb, parse_mode="HTML")
-    lot_id, seller, card_id, price, seller_id = lot
-    card_info = CARDS.get(card_id, {"name": "Неизвестный актив", "rarity": "common"})
-    
-    # Стилизация редкости
-    rarity_data = RARITY_INFO.get(card_info.get("rarity", "common"), RARITY_INFO["common"])
-    # Внутри show_market_page
-    rarity_text = f"<b>{rarity_data['name']}</b>"
-    
-    text = (
-        f"⚖️ <b>ТОРГОВАЯ БИРЖА</b> | Лот #{page + 1}/{total}\n"
-        f"{UI_SEP}\n"
-        f"📦 <b>АКТИВ:</b> {card_info['name']}\n"
-        f"💎 <b>КЛАСС:</b> {rarity_text}\n"
-        f"👤 <b>ПРОДАВЕЦ:</b> {seller}\n"
-        f"{UI_SEP}\n"
-        f"💰 <b>СТОИМОСТЬ:</b> <code>{format_num(price)}</code> 🍅\n"
-    )
-
-    buttons = []
-    user_id = message_or_call.from_user.id
-    if user_id == seller_id:
-        buy_btn = InlineKeyboardButton(text="🗑 Удалить лот", callback_data=f"market_delete_{lot_id}")
-    else:
-        buy_btn = InlineKeyboardButton(text=f"💳 Купить ({format_num(price)})", callback_data=f"buy_lot_{lot_id}")
-    
-    buttons.append([buy_btn])
-    
-    nav_row = []
-    if page > 0:
-        nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"market_page_{page-1}"))
-    nav_row.append(InlineKeyboardButton(text=f"📄 {page+1}", callback_data="ignore"))
-    if (page + 1) < total:
-        nav_row.append(InlineKeyboardButton(text="▶️", callback_data=f"market_page_{page+1}"))
-        
-    buttons.append(nav_row)
-    buttons.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data=f"market_page_{page}")])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    
+    # 5. Отправка
     if isinstance(message_or_call, CallbackQuery):
         await message_or_call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     else:
@@ -973,14 +926,10 @@ async def cmd_start(message: types.Message):
 # --- ДОЙКА (С УЧЕТОМ НОВЫХ СТАТОВ) ---
 @dp.message(F.text.in_({"🥛 Сбор Молока"}))
 async def milk_handler(message: types.Message):
-    # УБРАЛ удаление сообщения игрока, чтобы не мелькало
-    # try: await message.delete()
-    # except: pass
-    
     user_id = message.from_user.id
     
-    # Получаем данные и бусты
     async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute('SELECT * FROM users WHERE user_id = ?', (user_id,)) as c:
             user = await c.fetchone()
         async with db.execute('SELECT active_boost, boost_end FROM users WHERE user_id = ?', (user_id,)) as c:
@@ -991,34 +940,42 @@ async def milk_handler(message: types.Message):
     is_boosted_milk = (time.time() < boost_end and active_boost == "milk_x2")
     is_boosted_luck = (time.time() < boost_end and active_boost == "luck_max")
 
-    base_milk = MILK_PER_CLICK * user[4]
+    base_milk = MILK_PER_CLICK * user['click_level']
     if is_boosted_milk: base_milk *= 2
 
-    # База 3% + 0.5% за уровень удачи.
-    # Если активен буст "Клевер", шанс 100%
+    # Шансы
     base_chance = 0.03 
-    luck_bonus = user[9] * 0.005
-    
+    luck_bonus = user['luck_level'] * 0.005
     drop_chance = 1.0 if is_boosted_luck else (base_chance + luck_bonus)
-    spill_chance = max(0, 0.05 - (user[10] * 0.01))
+    spill_chance = max(0, 0.05 - (user['safety_level'] * 0.01))
 
     rand = random.random()
-    boost_icon = "⚡️x2 " if is_boosted_milk else ""
+    boost_icon = "⚡x2 " if is_boosted_milk else ""
     
-    # Формируем ответ
+    # Логика с начислением и текстом
     if rand < spill_chance:
-        # ...
-        text = f"⚠️ Утечка сырья! Потеряно {lost} Л. Требуется улучшение 'Крышка'."
+        lost = max(1, int(user['milk'] * 0.1))
+        # Сразу считаем новый итог
+        new_total = max(0, user['milk'] - lost)
+        await update_stat(user_id, "milk", new_total)
+        
+        text = f"⚠️ <b>УТЕЧКА:</b> Разлито {lost} Л. Баланс: {format_num(new_total)} Л"
+    
     elif rand > (1 - drop_chance):
-        # ...
-        text = f"🥛 +{base_milk} Л\n🎁 <b>БОНУС:</b> Обнаружен химический реагент."
+        await update_stat(user_id, "fertilizer", user['fertilizer'] + 1)
+        new_total = user['milk'] + base_milk
+        await update_stat(user_id, "milk", new_total)
+        
+        text = f"🥛 <b>УСПЕХ:</b> {boost_icon}+{base_milk} Л + 🧪 Химия! (Всего: {format_num(new_total)} Л)"
+    
     else:
-        # ...
-        text = f"🥛 {boost_icon}Обработано +{base_milk} Л."
+        new_total = user['milk'] + base_milk
+        await update_stat(user_id, "milk", new_total)
+        
+        text = f"🥛 <b>СБОР:</b> {boost_icon}+{base_milk} Л (Всего: {format_num(new_total)} Л)"
 
-    # ОТПРАВЛЯЕМ СООБЩЕНИЕ И ЯВНО ПРИКРЕПЛЯЕМ КЛАВИАТУРУ
-    # И самое главное - НЕ УДАЛЯЕМ ЕГО ПОТОМ
-    await message.answer(text, reply_markup=main_keyboard(), parse_mode="HTML")
+    # Используем функцию "чистого чата"
+    await send_with_cleanup(message, text, reply_markup=main_keyboard())
 
 # --- ПОЛИВ (С УЧЕТОМ ЭКОНОМИИ И ГМО) ---
 @dp.message(F.text.in_({"💦 Полить грядку"}))
@@ -1334,8 +1291,8 @@ async def profile_new(m: types.Message):
         f"<b>📊 АКТИВЫ И РЕСУРСЫ</b>\n"
         f"{UI_BULLET} Молоко: <code>{format_num(user[2])}</code> Л\n"
         f"{UI_BULLET} Помидоры: <code>{format_num(user[3])}</code> шт\n"
-        f"{UI_BULLET} Мандарины: <code>{user[15]}</code> кг\n"
-        f"{UI_BULLET} Реагенты: <code>{user[6]}</code> ед\n\n"
+        f"{UI_BULLET} Мандарины: <code>{format_num(user['mandarins'])}</code> кг\n"
+        f"{UI_BULLET} Реагенты: <code>{format_num(user['fertilizer'])}</code> ед\n\n"
         
         f"<b>⚙️ ТЕХНОЛОГИЧЕСКИЙ УРОВЕНЬ</b>\n"
         f"{UI_SUB_BULLET} Сила клика: <code>Ур. {user[4]}</code>\n"
@@ -2052,29 +2009,69 @@ async def show_cards_list(message: types.Message):
     except:
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# --- ХЕНДЛЕР ПРОСМОТРА КАРТЫ (При клике на список) ---
+# --- ИСПРАВЛЕННЫЙ ХЕНДЛЕР ПРОСМОТРА (Вставлять перед admin_console_loop) ---
 @dp.callback_query(F.data.startswith("view_card_"))
 async def view_card_handler(cb: CallbackQuery):
-    card_id = cb.data.split("_")[2]
-    user_id = cb.from_user.id
+    try:
+        # data format: view_card_morgenshtern
+        parts = cb.data.split("_")
+        if len(parts) < 3: return # Защита от битых данных
+        
+        card_id = parts[2]
+        user_id = cb.from_user.id
+        
+        # Проверяем наличие карты
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id)) as c:
+                res = await c.fetchone()
+                count = res[0] if res else 0
+
+        # Вызываем функцию отправки
+        await send_card_info(cb.message, card_id, count)
+        await cb.answer()
+        
+    except Exception as e:
+        print(f"Ошибка просмотра карты: {e}")
+        await cb.answer("❌ Ошибка: Не удалось открыть карту.", show_alert=True)
+
+# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ОТПРАВКИ (Замени старую def send_card_info) ---
+async def send_card_info(message: types.Message, card_id: str, count: int = 1):
+    if card_id not in CARDS:
+        await message.answer("❌ Ошибка: карта не найдена в базе.")
+        return
+
+    card = CARDS[card_id]
+    # Берем данные редкости
+    rarity_data = RARITY_INFO.get(card.get("rarity", "common"), RARITY_INFO["common"])
     
-    # Получаем кол-во
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT count FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, card_id)) as c:
-            res = await c.fetchone()
-            count = res[0] if res else 0
+    # ИСПРАВЛЕНО: Используем <b> вместо <font>, так как Telegram не поддерживает font
+    rarity_text = f"<b>{rarity_data['name']}</b>"
 
-    await cb.answer() 
-    # Вызываем существующую функцию отправки фото
-    await send_card_info(cb.message, card_id, count)
+    # Текст карточки
+    caption = (
+        f"{rarity_data['icon']} <b>{card['name']}</b>\n"
+        f"➖➖➖➖➖➖➖➖\n"
+        f"🎭 Редкость: {rarity_text}\n"
+        f"📜 Описание: <i>{card.get('desc', 'Нет описания')}</i>\n"
+        f"🎒 В наличии: <b>{count} шт.</b>"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💰 Продать карту", callback_data=f"sell_init_{card_id}")]
+    ])
 
-@dp.message(F.text == "🎡 Развлечения")
-async def nav_fun(message: types.Message):
-    await message.answer("🎪 Добро пожаловать в парк развлечений!", reply_markup=fun_keyboard())
-
-@dp.message(F.text == "🔙 Назад")
-async def nav_back(message: types.Message):
-    await message.answer("🏡 Вы вернулись на ферму.", reply_markup=main_keyboard())
+    image_filename = card.get("img", "default.jpg") 
+    image_path = os.path.join(CARDS_DIR, image_filename)
+    
+    try:
+        if os.path.exists(image_path):
+            photo = FSInputFile(image_path)
+            await message.answer_photo(photo, caption=caption, reply_markup=kb, parse_mode="HTML")
+        else:
+            # Если файла нет, отправляем текст, чтобы бот не молчал
+            await message.answer(f"🖼 <i>(Фото не найдено)</i>\n\n" + caption, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"Ошибка отправки: {e}\n\n" + caption, reply_markup=kb, parse_mode="HTML")
 
 # --- АДМИН ПАНЕЛЬ (GUI) ---
 
@@ -3258,4 +3255,5 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
