@@ -358,7 +358,7 @@ BASE_CASINO_COST = 10
 FERT_EFFECT = 5
 
 # --- БАЗА ДАННЫХ ---
-DB_NAME = 'farm_v4.db'
+DB_NAME = 'farm_v5.db'
 
 # --- ANTI-SPAM ---
 SPAM_LIMIT = 12 # Чуть поднял лимит, чтобы веселее кликать
@@ -3457,3 +3457,4 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
