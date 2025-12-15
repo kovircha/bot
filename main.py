@@ -358,7 +358,7 @@ BASE_CASINO_COST = 10
 FERT_EFFECT = 5
 
 # --- БАЗА ДАННЫХ ---
-DB_NAME = 'farm_v5.db'
+DB_NAME = 'farm_v4.db'
 
 # --- ANTI-SPAM ---
 SPAM_LIMIT = 12 # Чуть поднял лимит, чтобы веселее кликать
@@ -2385,17 +2385,27 @@ async def view_other_collection(cb: CallbackQuery):
     await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_builder), parse_mode="HTML")
 
 # ==========================================
-# 🔥 БЛОК: ТОРГОВЕЦ, СКЛАД, ЛАБОРАТОРИЯ 🔥
-# Вставлять ПЕРЕД функцией admin_console_loop
+# 🔥 ИСПРАВЛЕННЫЙ БЛОК: ТОРГОВЕЦ, СКЛАД, ЛАБОРАТОРИЯ 🔥
 # ==========================================
 
+# --- КОНСТАНТЫ ДЛЯ ЛАБОРАТОРИИ И КРАФТА ---
+MUTAGEN_SHOP_PRICE = 5000  # Цена мутагена
+CRAFT_COST_MUTAGEN = 1     # Расход мутагена на крафт
+CRAFT_CARDS_NEEDED = 3     # Сколько карт сжигаем
+
 # --- 1. 💲 ТОРГОВЕЦ (МАГАЗИН) ---
+
 @dp.message(F.text == "💲 Торговец")
 async def shop_menu(message: types.Message):
     user = await get_user(message.from_user.id)
+    # Генерируем текст
     text = get_shop_text(user)
-    # По умолчанию режим покупки
-    await message.answer(text, reply_markup=upgrades_keyboard(user, info_mode=False), parse_mode="HTML")
+    # Отправляем меню (режим покупки по умолчанию)
+    try:
+        await message.answer(text, reply_markup=upgrades_keyboard(user, info_mode=False), parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка магазина: {e}")
+        await message.answer("⚠️ Ошибка магазина. Попробуйте позже.")
 
 # Переключатель режимов (Инфо / Покупка)
 @dp.callback_query(F.data.startswith("shop_mode_"))
@@ -2411,15 +2421,14 @@ async def switch_shop_mode(cb: CallbackQuery):
     status = "ℹ️ Режим ИНФОРМАЦИИ" if is_info else "💳 Режим ПОКУПКИ"
     await cb.answer(status)
 
-# --- ИСПРАВЛЕННЫЙ ХЕНДЛЕР ПОКУПКИ ---
+# Хендлер покупки улучшений
 @dp.callback_query(F.data.startswith("buy_"))
 async def buy_upgrade(cb: CallbackQuery):
     # Разбираем callback: buy_click_b (покупка) ИЛИ buy_click_i (инфо)
     parts = cb.data.split("_")
     
-    # Защита от старых кнопок (если вдруг остались)
     if len(parts) < 3:
-        await cb.answer("⚠️ Меню устарело. Нажми /start", show_alert=True)
+        await cb.answer("⚠️ Меню устарело.", show_alert=True)
         return
 
     type_up = parts[1] # click, tomato, tractor...
@@ -2450,35 +2459,28 @@ async def buy_upgrade(cb: CallbackQuery):
     discount = min(0.30, lvl_agr * ACAD_DISCOUNT_PER_LVL)
     price_factor = 1.0 - discount
     
-    # Расчет цены (Base * 1.X ^ Lvl)
+    # Расчет цены
     raw_cost = 0
     col = ""
     new_lvl = 0
     
+    # Словари баз цен и множителей для упрощения
     if type_up == "click":
-        raw_cost = 50 * (1.4 ** user['click_level'])
-        col = "click_level"; new_lvl = user['click_level'] + 1
+        raw_cost = 50 * (1.4 ** user['click_level']); col = "click_level"; new_lvl = user['click_level'] + 1
     elif type_up == "tomato":
-        raw_cost = 150 * (1.5 ** user['tomato_level'])
-        col = "tomato_level"; new_lvl = user['tomato_level'] + 1
+        raw_cost = 150 * (1.5 ** user['tomato_level']); col = "tomato_level"; new_lvl = user['tomato_level'] + 1
     elif type_up == "luck":
-        raw_cost = 500 * (1.6 ** user['luck_level'])
-        col = "luck_level"; new_lvl = user['luck_level'] + 1
+        raw_cost = 500 * (1.6 ** user['luck_level']); col = "luck_level"; new_lvl = user['luck_level'] + 1
     elif type_up == "safe":
-        raw_cost = 300 * (1.4 ** user['safety_level'])
-        col = "safety_level"; new_lvl = user['safety_level'] + 1
+        raw_cost = 300 * (1.4 ** user['safety_level']); col = "safety_level"; new_lvl = user['safety_level'] + 1
     elif type_up == "eco":
-        raw_cost = 1000 * (1.5 ** user['eco_level'])
-        col = "eco_level"; new_lvl = user['eco_level'] + 1
+        raw_cost = 1000 * (1.5 ** user['eco_level']); col = "eco_level"; new_lvl = user['eco_level'] + 1
     elif type_up == "cas":
-        raw_cost = 750 * (1.3 ** user['casino_level'])
-        col = "casino_level"; new_lvl = user['casino_level'] + 1
+        raw_cost = 750 * (1.3 ** user['casino_level']); col = "casino_level"; new_lvl = user['casino_level'] + 1
     elif type_up == "gmo":
-        raw_cost = 2000 * (1.7 ** user['gmo_level'])
-        col = "gmo_level"; new_lvl = user['gmo_level'] + 1
+        raw_cost = 2000 * (1.7 ** user['gmo_level']); col = "gmo_level"; new_lvl = user['gmo_level'] + 1
     elif type_up == "tractor":
-        raw_cost = 5000 * (1.6 ** user['tractor_level'])
-        col = "tractor_level"; new_lvl = user['tractor_level'] + 1
+        raw_cost = 5000 * (1.6 ** user['tractor_level']); col = "tractor_level"; new_lvl = user['tractor_level'] + 1
 
     cost = int(raw_cost * price_factor)
 
@@ -2486,13 +2488,13 @@ async def buy_upgrade(cb: CallbackQuery):
         await update_stat(cb.from_user.id, "tomatoes", tom - cost)
         await update_stat(cb.from_user.id, col, new_lvl)
         
-        # Если купили первый трактор - запускаем таймер
+        # Если купили первый трактор - ставим таймер
         if type_up == "tractor" and new_lvl == 1:
             await update_stat(cb.from_user.id, "last_tractor_collect", time.time())
 
         await cb.answer(f"✅ Куплено!", show_alert=False)
         
-        # Обновляем клавиатуру (остаемся в том же режиме)
+        # Обновляем клавиатуру
         u_fresh = await get_user(cb.from_user.id)
         try: 
             await cb.message.edit_text(
@@ -2506,6 +2508,23 @@ async def buy_upgrade(cb: CallbackQuery):
 
 
 # --- 2. 📦 ХРАНИЛИЩЕ (СКЛАД) ---
+
+# !!! ВОТ ЭТОЙ ФУНКЦИИ НЕ ХВАТАЛО, ИЗ-ЗА НЕЕ ПАДАЛ СКЛАД !!!
+def inventory_keyboard(fert, mand):
+    kb = [
+        [InlineKeyboardButton(text="🎅 Открыть Лавку Санты", callback_data="santa_shop_open")],
+        [InlineKeyboardButton(text="🎴 Моя Коллекция Карт", callback_data="open_card_album")],
+        # Кнопка обновления удаляет старое сообщение и пишет новое или обновляет текст
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_inv")] 
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+# Дополнительный хендлер для открытия альбома из склада
+@dp.callback_query(F.data == "open_card_album")
+async def open_card_album_handler(cb: CallbackQuery):
+    await show_cards_list(cb.message)
+    await cb.answer()
+
 @dp.message(F.text.in_({"📦 Хранилище", "🎒 Склад"}))
 @dp.callback_query(F.data == "refresh_inv")
 async def show_inventory(message_or_call: types.Union[Message, CallbackQuery]):
@@ -2520,13 +2539,19 @@ async def show_inventory(message_or_call: types.Union[Message, CallbackQuery]):
             my_cards = await c.fetchall()
             
     card_list_text = ""
+    total_cards = 0
     if my_cards:
         card_lines = []
         for c_id, count in my_cards:
              if c_id in CARDS:
                  card_name = CARDS[c_id]['name']
                  card_lines.append(f"  └ <b>{card_name}</b> — {count} шт.")
-        card_list_text = "\n" + "\n".join(card_lines)
+                 total_cards += count
+        # Показываем только первые 5 карт в тексте, чтобы не спамить, остальное в кнопке
+        if len(card_lines) > 5:
+            card_list_text = "\n" + "\n".join(card_lines[:5]) + f"\n  ...и еще {len(card_lines)-5}."
+        else:
+            card_list_text = "\n" + "\n".join(card_lines)
     else:
         card_list_text = "\n  └ <i>Активы отсутствуют</i>"
         
@@ -2534,8 +2559,8 @@ async def show_inventory(message_or_call: types.Union[Message, CallbackQuery]):
         f"📦 <b>СОСТОЯНИЕ СКЛАДА</b>\n"
         f"{UI_SEP}\n"
         f"🧪 <b>Химикаты:</b> <code>{fertilizer_count}</code> ед.\n"
-        f"🍊 <b>Сезонная валюта:</b> <code>{format_num(mandarin_count)}</code> кг\n\n"
-        f"📂 <b>КОЛЛЕКЦИОННЫЕ АКТИВЫ:</b>"
+        f"🍊 <b>Мандарины:</b> <code>{format_num(mandarin_count)}</code> кг\n\n"
+        f"📂 <b>КАРТОЧКИ ({total_cards} шт):</b>"
         f"{card_list_text}\n"
         f"{UI_SEP}"
     )
@@ -2553,6 +2578,7 @@ async def show_inventory(message_or_call: types.Union[Message, CallbackQuery]):
 
 
 # --- 3. 🧬 ЛАБОРАТОРИЯ ---
+
 @dp.message(F.text == "🧬 Лаборатория")
 async def lab_menu(message: types.Message):
     user_id = message.from_user.id
@@ -2572,7 +2598,7 @@ async def lab_menu(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🧪 Купить Мутаген ({format_num(MUTAGEN_SHOP_PRICE)} 🍅)", callback_data="buy_mutagen")],
         [InlineKeyboardButton(text="⚗️ Начать Синтез", callback_data="start_craft_list")],
-        [InlineKeyboardButton(text="🔙 Закрыть", callback_data="delete_msg")]
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="delete_msg")]
     ])
     
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
@@ -2586,8 +2612,10 @@ async def buy_mutagen_handler(cb: CallbackQuery):
         await update_stat(user_id, "tomatoes", u['tomatoes'] - MUTAGEN_SHOP_PRICE)
         await update_stat(user_id, "mutagen", u['mutagen'] + 1)
         await cb.answer("✅ Мутаген приобретен!", show_alert=True)
+        # Обновляем меню лабы
         await lab_menu(cb.message)
-        await cb.message.delete()
+        try: await cb.message.delete()
+        except: pass
     else:
         await cb.answer("❌ Недостаточно средств!", show_alert=True)
 
@@ -2609,6 +2637,7 @@ async def craft_list_handler(cb: CallbackQuery):
         card_name = CARDS[card_id]['name']
         rarity = CARDS[card_id].get('rarity', 'common')
         
+        # Нельзя крафтить из лимитированных
         if rarity == 'limited': continue 
         
         btn_text = f"{card_name} ({count} шт)"
@@ -2616,7 +2645,7 @@ async def craft_list_handler(cb: CallbackQuery):
         
     kb_rows.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="delete_msg")])
     
-    await cb.message.edit_text("⚗️ <b>СЕЛЕКЦИЯ:</b>\nВыберите образец для мутации:", 
+    await cb.message.edit_text("⚗️ <b>СЕЛЕКЦИЯ:</b>\nВыберите карту, которую хотите сжечь ради мутации:", 
                                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows), parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("do_craft_"))
@@ -2630,23 +2659,28 @@ async def execute_craft(cb: CallbackQuery):
         return
         
     input_rarity = CARDS[card_id_input].get('rarity', 'common')
+    
+    # Логика повышения редкости
     target_rarity = "rare"
     if input_rarity == "rare": target_rarity = "epic"
     elif input_rarity == "epic": target_rarity = "limited"
     
+    # Ищем карты нужной редкости
     potential_rewards = [cid for cid, cdata in CARDS.items() if cdata.get('rarity') == target_rarity]
     
     if not potential_rewards:
-        await cb.answer("❌ Ошибка базы (нет карт).", show_alert=True)
+        await cb.answer("❌ Нет карт более высокой редкости в базе!", show_alert=True)
         return
         
     reward_card_id = random.choice(potential_rewards)
     reward_name = CARDS[reward_card_id]['name']
     
     async with aiosqlite.connect(DB_NAME) as db:
+        # Списываем исходники и мутаген
         await db.execute('UPDATE user_cards SET count = count - ? WHERE user_id = ? AND card_id = ?', (CRAFT_CARDS_NEEDED, user_id, card_id_input))
         await db.execute('UPDATE users SET mutagen = mutagen - ? WHERE user_id = ?', (CRAFT_COST_MUTAGEN, user_id))
         
+        # Выдаем новую карту
         exists = await db.execute_fetchall('SELECT 1 FROM user_cards WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
         if exists:
             await db.execute('UPDATE user_cards SET count = count + 1 WHERE user_id = ? AND card_id = ?', (user_id, reward_card_id))
@@ -2654,11 +2688,18 @@ async def execute_craft(cb: CallbackQuery):
             await db.execute('INSERT INTO user_cards (user_id, card_id, count) VALUES (?, ?, 1)', (user_id, reward_card_id))
         await db.commit()
         
-    await cb.message.edit_text(f"🧬 <b>СИНТЕЗ ЗАВЕРШЕН!</b>\nПолучена карта: {reward_name}", parse_mode="HTML")
+    await cb.message.edit_text(f"🧬 <b>СИНТЕЗ ЗАВЕРШЕН!</b>\nПолучена новая карта: <b>{reward_name}</b>", parse_mode="HTML")
+    # Отправляем инфо о новой карте
     await send_card_info(cb.message, reward_card_id, 1)
 
+# Вспомогательный хендлер для удаления сообщений
+@dp.callback_query(F.data == "delete_msg")
+async def delete_msg_handler(cb: CallbackQuery):
+    await cb.message.delete()
+    await cb.answer()
+
 # ==========================================
-# КОНЕЦ БЛОКА
+# КОНЕЦ ИСПРАВЛЕННОГО БЛОКА
 # ==========================================
 
 
@@ -3457,4 +3498,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
+
+
 
